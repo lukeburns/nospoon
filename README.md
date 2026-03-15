@@ -49,7 +49,6 @@ nospoon is a revolutionary peer-to-peer VPN that **eliminates the need for a pub
 2. **No Port Forwarding** — No router/firewall configuration required
 3. **Automatic NAT Traversal** — Uses UDP hole-punching to pierce through NATs and firewalls
 4. **Public Key Addressing** — Peers are identified by cryptographic keys, not IP addresses
-5. **End-to-End Encryption** — All traffic is encrypted using the Noise protocol
 
 ---
 
