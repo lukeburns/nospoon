@@ -19,6 +19,7 @@
   ],
   "author": "Vaios K",
   "license": "GPL-3.0-only",
+  "files": ["bin/", "lib/", "README.md", "LICENSE"],
   "type": "commonjs",
   "dependencies": {
     "hyperdht": "^6.29.1",
