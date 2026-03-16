@@ -22,7 +22,7 @@ buildNpmPackage rec {
     ];
   };
 
-  npmDepsHash = "sha256-UuLePiZVUm3/Uc96ERMTBk74d0GgFzVgfpmyk5Z94XM=";
+  npmDepsHash = "sha256-CfKFQ7Sdqvm5JSdNjvDTwb676PhYmEIJp54ogttm9+s=";
 
   # koffi ships prebuilds — no native compilation needed
   makeCacheWritable = true;
