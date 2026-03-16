@@ -104,18 +104,18 @@ Client options:
   --full-tunnel         Route all internet traffic through the VPN
 
 Examples:
-  # Open mode (any client can connect)
-  sudo nospoon server
-  sudo nospoon client <public-key>
-
-  # Authenticated mode
+  # Authenticated mode (recommended)
   nospoon genkey                        # generate client identity
   sudo nospoon server --config peers.json
   sudo nospoon client <server-key> --seed <client-seed>
 
   # Full tunnel (use as internet VPN)
-  sudo nospoon server --full-tunnel
-  sudo nospoon client <public-key> --full-tunnel
+  sudo nospoon server --full-tunnel --config peers.json
+  sudo nospoon client <server-key> --seed <seed> --full-tunnel
+
+  # Open mode (testing only — no IP assignment, no authentication)
+  sudo nospoon server
+  sudo nospoon client <public-key>
 
 peers.json format:
   {
