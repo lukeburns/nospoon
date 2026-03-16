@@ -19,11 +19,27 @@ Requires Linux and Node.js 18+. Root needed for TUN device creation.
 Like [HoleSail](https://holesail.io/) but at Layer 3 — instead of forwarding a single port, nospoon creates a full network interface. Every service on the server is reachable by IP, as if you were on the same LAN.
 
 ```bash
+# Generate a client identity
+nospoon genkey
+# Output: Seed (keep secret): abc123...
+#         Public key (share): def456...
+```
+
+Create `peers.json` on the server:
+```json
+{
+  "peers": {
+    "<client-public-key>": "10.0.0.2"
+  }
+}
+```
+
+```bash
 # Server (behind NAT, no port forwarding needed)
-sudo nospoon server
+sudo nospoon server --config peers.json
 
 # Client (anywhere in the world)
-sudo nospoon client <public-key>
+sudo nospoon client <server-key> --seed <client-seed>
 
 # Access anything on the server
 curl http://10.0.0.1:8080       # web app
@@ -31,40 +47,9 @@ ssh user@10.0.0.1               # SSH
 ping 10.0.0.1                   # ICMP
 ```
 
-With authenticated mode you control exactly who connects and assign fixed IPs:
+Using `--config` is recommended — it authenticates clients and assigns fixed IPs. Open mode (`sudo nospoon server` without `--config`) is available for quick testing but has no authentication and only supports a single client.
 
-```bash
-nospoon genkey                              # on each client
-sudo nospoon server --config peers.json     # server
-sudo nospoon client <key> --seed <seed>     # client
-```
-
-`peers.json`:
-```json
-{
-  "peers": {
-    "<client-public-key>": "10.0.0.2",
-    "<another-client-key>": "10.0.0.3"
-  }
-}
-```
-
-### 2. Open access VPN
-
-Run a VPN server that anyone with the key can join — no accounts, no sign-ups. Share the public key and people connect instantly.
-
-```bash
-# Server
-sudo nospoon server
-
-# Share the public key with anyone
-# They connect with:
-sudo nospoon client <public-key>
-```
-
-Useful for community networks, events, or offering free VPN access.
-
-### 3. Full tunnel — access the internet from home
+### 2. Full tunnel — access the internet from home
 
 Route all your internet traffic through your home connection. When you're abroad, your traffic exits from your home IP — access geo-restricted content, use your home network's DNS, or just browse as if you were home.
 
@@ -113,7 +98,7 @@ Generate a client key pair. No root required.
 3. A Noise-encrypted stream is established (X25519 + ChaCha20-Poly1305 + BLAKE2b)
 4. IP packets flow through TUN devices on both sides, length-framed over the encrypted stream
 
-All traffic is end-to-end encrypted. No data passes through the DHT — it's only used for peer discovery and hole-punching.
+All traffic is end-to-end encrypted. No data passes through the DHT — it's only used for peer discovery and hole-punching. In authenticated mode, unauthorized peers are rejected during the Noise handshake before a connection is established.
 
 ## Limitations
 
