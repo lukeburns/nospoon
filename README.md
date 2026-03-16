@@ -2,491 +2,132 @@
 
 > *"There is no spoon."* — The Matrix (1999)
 
-nospoon is named after the iconic scene from The Matrix where young Neo is freed from the illusion of limitations. Just as there is no spoon, there is no need for public IPs, open ports or port forwarding — just a cryptographic key.
+A peer-to-peer VPN that **eliminates the need for a publicly reachable server**. Built on [HyperDHT](https://github.com/holepunchto/hyperdht) for NAT hole-punching and Noise-encrypted tunnels. No public IP, no port forwarding, no central infrastructure — just a key.
 
-<p align="center">
-  <strong>The first P2P VPN that works from behind NAT. No port forwarding. No router config. Just a key.</strong>
-</p>
+## Install
 
-<p align="center">
-  <a href="https://github.com/jjacke13/nospoon">
-    <img src="https://img.shields.io/badge/GitHub-Repository-blue?logo=github" alt="GitHub">
-  </a>
-  <a href="https://www.npmjs.com/package/nospoon">
-    <img src="https://img.shields.io/badge/npm-v0.1.0-red?logo=npm" alt="npm">
-  </a>
-  <a href="https://www.gnu.org/licenses/gpl-3.0">
-    <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
-  </a>
-</p>
-
----
-
-## Introducing nospoon
-
-nospoon is a revolutionary peer-to-peer VPN that **eliminates the need for a publicly reachable server entirely**. It leverages **HyperDHT** — the same distributed hash table and hole-punching technology that powers Hyperswarm — to create direct encrypted connections between peers.
-
-```
-┌─────────┐                           ┌─────────┐
-│ Client  │◀───── HyperDHT ──────────▶│ Client  │
-│         │   (P2P encrypted tunnel)  │         │
-└─────────┘                           └─────────┘
+```bash
+sudo npm install -g nospoon
 ```
 
-### What Makes nospoon Different?
-
-| Feature | Traditional VPN | nospoon |
-|---------|-----------------|---------------------|
-| Publicly reachable server | Yes | No |
-| Port forwarding | Yes | No |
-| Monthly cost | $5-10+ | Free |
-| Infrastructure | Central server | Peer-to-peer |
-| Protocol | WireGuard/OpenVPN | HyperDHT + Noise |
-
-### Key Innovations
-
-1. **No Public IP Needed** — The "server" peer sits behind your home NAT; clients reach in via hole-punching
-2. **No Port Forwarding** — No router/firewall configuration required
-3. **Automatic NAT Traversal** — Uses UDP hole-punching to pierce through NATs and firewalls
-4. **Public Key Addressing** — Peers are identified by cryptographic keys, not IP addresses
-
----
-
-## How It Works
-
-nospoon combines several clever technologies to achieve what was previously impossible:
-
-### 1. HyperDHT: The Magic Behind the Magic
-
-[HyperDHT](https://github.com/holepunchto/hyperdht) is a distributed hash table (DHT) built on the Kademlia algorithm, enhanced with UDP hole-punching capabilities. It's the same technology that enables peer-to-peer connections in apps like [Keet](https://keet.io/) and [Pears](https://pears.com/).
-
-In HyperDHT:
-- **Peers are identified by public keys**, not IP addresses
-- The DHT maps public keys to network locations (IP:port)
-- Anyone can announce their presence under their public key
-- Anyone can look up a public key to discover how to connect
-
-### 2. UDP Hole-Punching: Breaking Through NAT
-
-Most devices on the internet sit behind NAT (Network Address Translation) or firewalls. This is why you can't directly connect to your home computer from outside — your router doesn't know which device should receive the incoming connection.
-
-UDP hole-punching solves this:
-
-```
-Step 1: Both peers announce to DHT
-        Client A ──▶ DHT: "I'm at 1.2.3.4:5000, here's my key"
-        Client B ──▶ DHT: "I'm at 5.6.7.8:6000, here's my key"
-
-Step 2: DHT tells each peer about the other
-        DHT ──▶ Client A: "Client B is at 5.6.7.8:6000"
-        DHT ──▶ Client B: "Client A is at 1.2.3.4:5000"
-
-Step 3: Simultaneous outbound connections punch holes
-        Client A ──▶ 5.6.7.8:6000 (UDP packet exits NAT, creates mapping)
-        Client B ──▶ 1.2.3.4:5000 (UDP packet exits NAT, creates mapping)
-
-Step 4: NAT mappings now exist in both directions
-        Direct P2P connection established! 🎉
-```
-
-This happens automatically — neither user needs to configure their router.
-
-### 3. Noise Protocol: Military-Grade Encryption
-
-All connections are encrypted using the [Noise Protocol Framework](https://noiseprotocol.org/). Each peer has a key pair:
-- **Public key** — Share this so others can find you
-- **Seed (private key)** — Keep this secret
-
-The Noise protocol provides:
-- Forward secrecy (compromised keys can't decrypt past sessions)
-- Identity hiding (optional)
-- Authenticated encryption (AEAD)
-
-### 4. TUN Interface: IP at Layer 3
-
-nospoon creates a virtual network interface (TUN device) at the operating system level:
-- IP packets are routed through this virtual interface
-- The VPN operates at Layer 3 (network layer), like WireGuard
-- Any IP-based protocol works — TCP, UDP, ICMP, etc.
-- Standard networking tools (ping, curl, ssh) work out of the box
-
----
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Internet                                 │
-│                                                                  │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                    HyperDHT Network                      │   │
-│   │                                                          │   │
-│   │    Peer Discovery: "Who has public key ABC123...?"      │   │
-│   │           ↓                                              │   │
-│   │    Response: "They're at 73.45.123.88:49737"           │   │
-│   │           ↓                                              │   │
-│   │    Hole Punching: UDP packets pierce NAT                │   │
-│   │                                                          │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                              ↓                                   │
-│   ┌──────────────────┐        ┌──────────────────┐            │
-│   │    Client A      │◀──────▶│    Client B      │            │
-│   │   10.0.0.2/24    │  Noise  │   10.0.0.1/24   │            │
-│   │                  │ encrypt │                  │            │
-│   │  ┌────────────┐  │         │  ┌────────────┐  │            │
-│   │  │  TUN dev   │  │         │  │  TUN dev   │  │            │
-│   │  │   tun0     │  │         │  │   tun0     │  │            │
-│   │  └────────────┘  │         │  └────────────┘  │            │
-│   └──────────────────┘         └──────────────────┘            │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-
-Local Network A                         Local Network B
-┌─────────────────┐                   ┌─────────────────┐
-│ 192.168.1.100   │                   │ 192.168.2.50    │
-│ (your laptop)   │                   │ (your server)   │
-└─────────────────┘                   └─────────────────┘
-```
-
----
+Requires Linux and Node.js 18+. Root needed for TUN device creation.
 
 ## Use Cases
 
-### 1. Personal VPN to Your Home Server
+### 1. Expose any service through NAT
 
-Instead of paying for a VPS to run your services, run them at home:
+Like [HoleSail](https://holesail.io/) but at Layer 3 — instead of forwarding a single port, nospoon creates a full network interface. Every service on the server is reachable by IP, as if you were on the same LAN.
 
 ```bash
-# On your home server (Raspberry Pi, old laptop, etc.)
+# Server (behind NAT, no port forwarding needed)
 sudo nospoon server
-# Output: Public key: a1b2c3d4e5f6...
 
-# On your laptop, anywhere in the world
-sudo nospoon client a1b2c3d4e5f6...
+# Client (anywhere in the world)
+sudo nospoon client <public-key>
 
-# Now access your home services as if you were on the same network
-curl http://10.0.0.1:8080      # Home server's web interface
-ssh user@10.0.0.1             # SSH into home server
-ping 10.0.0.1                 # Test connectivity
+# Access anything on the server
+curl http://10.0.0.1:8080       # web app
+ssh user@10.0.0.1               # SSH
+ping 10.0.0.1                   # ICMP
 ```
 
-**Real-world example:** Access your:
-- Home Assistant instance
-- Media server (Plex/Jellyfin)
-- Git self-hosted
-
-### 2. Multi-Client Networking
-
-Connect multiple clients to a single server. All clients can reach each other through the server:
-
-```
-       ┌──────────────────┐
-       │     Server       │
-       │    10.0.0.1      │
-       └────────┬─────────┘
-                │
-       ┌────────┼
-       │        │        
-       ▼        ▼        
-   10.0.0.2   10.0.0.3
-   Laptop     Desktop
-```
-
-All machines can reach each other via the server. Perfect for accessing multiple devices behind a single home connection.
-
-### 3. Secure IoT Device Access
-
-Connect to devices behind home NAT without exposing them to the public internet:
-
-```
-Internet
-    │
-    │ (nospoon tunnel)
-    ▼
-┌────────────────────┐
-│  Your Laptop      │    ┌────────────────────┐
-│  (Client)         │───▶│  Home Network      │
-│  10.0.0.2         │    │  IoT Device       │
-└────────────────────┘    │  10.0.0.1         │
-                          └────────────────────┘
-```
-
-The IoT device is never exposed to the public internet — only you can reach it through the encrypted tunnel.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Linux
-- Node.js 18+
-- sudo access (for TUN device creation)
-
-### Installation
+With authenticated mode you control exactly who connects and assign fixed IPs:
 
 ```bash
-# Clone the repository
-git clone https://github.com/jjacke13/nospoon.git
-cd nospoon
-
-# Install dependencies
-npm install
+nospoon genkey                              # on each client
+sudo nospoon server --config peers.json     # server
+sudo nospoon client <key> --seed <seed>     # client
 ```
 
-### Quick Start
-
-#### Option 1: Open Mode (Personal Use)
-
-Best for personal VPN use. Any client with your public key can connect.
-
-**Server side:**
-```bash
-sudo node bin/cli.js server
-```
-
-Output:
-```
-TUN device tun0 up with 10.0.0.1/24 (MTU 1400)
-
-Server listening
-TUN IP:      10.0.0.1
-Public key:  9f3a2b7e...
-
-Client command:
-  sudo nospoon client 9f3a2b7e...
-```
-
-**Client side:**
-```bash
-sudo node bin/cli.js client 9f3a2b7e...
-```
-
-Output:
-```
-TUN device tun0 up with 10.0.0.2/24 (MTU 1400)
-Connected to server
-Remote reachable at 10.0.0.1
-```
-
-You're connected! Try:
-```bash
-ping 10.0.0.1
-ssh user@10.0.0.1
-```
-
-#### Option 2: Authenticated Mode (Multi-User)
-
-For controlled access where you specify which clients can connect.
-
-**Step 1: Generate client keys**
-```bash
-# On each client machine
-node bin/cli.js genkey
-
-# Output:
-# Seed (keep secret):   abc123...
-# Public key (share):   def456...
-```
-
-Give the public key to the server operator.
-
-**Step 2: Create peers.json on server**
+`peers.json`:
 ```json
 {
   "peers": {
-    "def456...client-public-key...": "10.0.0.2",
-    "789abc...another-client...": "10.0.0.3"
+    "<client-public-key>": "10.0.0.2",
+    "<another-client-key>": "10.0.0.3"
   }
 }
 ```
 
-**Step 3: Start server with config**
-```bash
-sudo node bin/cli.js server --config peers.json
-```
+### 2. Open access VPN
 
-**Step 4: Start clients**
-```bash
-# Client with seed (for authenticated mode)
-sudo node bin/cli.js client <server-public-key> --seed <client-seed> --ip 10.0.0.2/24
-```
-
----
-
-## Command Reference
-
-### Server
-
-```bash
-sudo nospoon server [options]
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.1/24` | TUN interface IP and subnet |
-| `--ipv6 <cidr>` | none | TUN IPv6 address (e.g. `fd00::1/64`) |
-| `--seed <hex>` | random | 64-char hex seed for deterministic key |
-| `--config <path>` | none | Path to peers.json for authentication |
-| `--mtu <num>` | `1400` | TUN interface MTU |
-| `--full-tunnel` | off | Enable NAT so clients can access the internet |
-| `--out-interface <if>` | auto-detect | Outgoing interface for NAT |
-
-### Client
-
-```bash
-sudo nospoon client <public-key> [options]
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.2/24` | TUN interface IP and subnet |
-| `--ipv6 <cidr>` | none | TUN IPv6 address (e.g. `fd00::2/64`) |
-| `--seed <hex>` | none | 64-char hex seed (for auth mode) |
-| `--mtu <num>` | `1400` | TUN interface MTU |
-| `--full-tunnel` | off | Route all internet traffic through the VPN |
-
-### Key Generation
-
-```bash
-node bin/cli.js genkey
-```
-
-Generates a new client key pair. No root required.
-
----
-
-## Configuration Examples
-
-### Custom IP Range
-
-Use any private subnet:
+Run a VPN server that anyone with the key can join — no accounts, no sign-ups. Share the public key and people connect instantly.
 
 ```bash
 # Server
-sudo nospoon server --ip 172.16.0.1/24
+sudo nospoon server
 
-# Client
-sudo nospoon client <key> --ip 172.16.0.2/24
+# Share the public key with anyone
+# They connect with:
+sudo nospoon client <public-key>
 ```
 
-### Deterministic Server Key
+Useful for community networks, events, or offering free VPN access.
 
-Generate a seed once and reuse it so clients always connect to the same identity:
+### 3. Full tunnel — access the internet from home
+
+Route all your internet traffic through your home connection. When you're abroad, your traffic exits from your home IP — access geo-restricted content, use your home network's DNS, or just browse as if you were home.
 
 ```bash
-# Generate a random seed
-openssl rand -hex 32
+# Server (your home machine)
+sudo nospoon server --full-tunnel --config peers.json
 
-# Use it every time
-sudo nospoon server --seed <your-seed>
+# Client (your laptop abroad)
+sudo nospoon client <key> --seed <seed> --full-tunnel
 ```
 
-### Lower MTU for Unstable Connections
+Kill switch included: if the tunnel drops, traffic fails instead of leaking.
 
-```bash
-sudo nospoon server --mtu 1200
-sudo nospoon client <key> --mtu 1200
-```
+## Command Reference
 
----
+### `sudo nospoon server [options]`
 
-## Technical Details
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ip <cidr>` | `10.0.0.1/24` | TUN interface IP |
+| `--ipv6 <cidr>` | none | TUN IPv6 address |
+| `--seed <hex>` | random | Deterministic server key |
+| `--config <path>` | none | Path to peers.json |
+| `--mtu <num>` | `1400` | TUN MTU |
+| `--full-tunnel` | off | Enable NAT for client internet access |
+| `--out-interface <if>` | auto | Outgoing interface for NAT |
 
-### Encryption
+### `sudo nospoon client <public-key> [options]`
 
-- **Protocol**: Noise Protocol Framework
-- **Key Exchange**: X25519 (Curve25519)
-- **AEAD Cipher**: ChaCha20-Poly1305 (encrypts all tunnel traffic)
-- **Hashing**: BLAKE2b
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ip <cidr>` | `10.0.0.2/24` | TUN interface IP |
+| `--ipv6 <cidr>` | none | TUN IPv6 address |
+| `--seed <hex>` | none | Client seed (for auth mode) |
+| `--mtu <num>` | `1400` | TUN MTU |
+| `--full-tunnel` | off | Route all traffic through VPN |
 
-### Networking
+### `nospoon genkey`
 
-- **Transport**: UDP via UDX (reliable, ordered, congestion-controlled)
-- **Addressing**: Public key → IP:port mapping via HyperDHT
-- **NAT Traversal**: UDP hole-punching with simultaneous open
-- **Interface**: TUN (Layer 3, IP packets)
+Generate a client key pair. No root required.
 
-### Performance
+## How It Works
 
-- **Latency**: Same as your direct internet connection (P2P)
-- **Throughput**: Limited by your upload/download speeds
-- **Overhead**: 4 bytes framing + Noise/UDX/UDP headers per packet
+1. Server announces its public key on the HyperDHT distributed hash table
+2. Client looks up the key, HyperDHT performs UDP hole-punching through both NATs
+3. A Noise-encrypted stream is established (X25519 + ChaCha20-Poly1305 + BLAKE2b)
+4. IP packets flow through TUN devices on both sides, length-framed over the encrypted stream
 
-### Compatibility
+All traffic is end-to-end encrypted. No data passes through the DHT — it's only used for peer discovery and hole-punching.
 
-- **Platforms**: Linux (macOS and Android planned)
-- **NAT Types**: Full cone, Address-restricted, Port-restricted (symmetric NAT may require relay)
-- **Firewalls**: Works through most firewalls; requires UDP outbound
+## Limitations
 
----
-
-## Troubleshooting
-
-### Connection Hangs
-
-If both peers are on strict symmetric NATs, direct connection may fail. HyperDHT will attempt relay, but it's not guaranteed. Check:
-- Both sides have internet access
-- No firewall blocks outgoing UDP
-
-### TUN Device Error
-
-```bash
-# If "tun0 already exists"
-sudo ip link delete tun0
-```
-
-### Check Connection Status
-
-```bash
-# View TUN interface
-ip addr show tun0
-
-# View routing
-ip route | grep tun
-
-# Monitor traffic
-sudo tcpdump -i tun0 -n
-```
-
-### Enable IP Forwarding (for routing)
-
-```bash
-sudo sysctl net.ipv4.ip_forward=1
-```
-
----
-
-## Limitations & Known Issues
-
-- **Symmetric NAT**: Both peers behind symmetric NAT may fail to connect (relay not yet implemented)
-- **Platform**: Currently Linux only (macOS and Android planned)
-- **DNS**: No built-in DNS push; use IP addresses directly or configure DNS manually
-
----
+- **Symmetric NAT** — both peers behind symmetric NAT may fail to connect
+- **DNS** — no built-in DNS push; configure manually
+- **Linux only** — macOS and Android planned
 
 ## License
 
-GPL-3.0 — See [LICENSE](LICENSE) for details.
-
----
+GPL-3.0 — See [LICENSE](LICENSE)
 
 ## Credits
 
-- [HyperDHT](https://github.com/holepunchto/hyperdht) — The DHT and hole-punching magic
+- [HyperDHT](https://github.com/holepunchto/hyperdht) — DHT and hole-punching
 - [koffi](https://koffi.dev/) — FFI for TUN device creation
 - [Noise Protocol](https://noiseprotocol.org/) — Encryption framework
-
----
-
-## Related Projects
-
-- [HoleSail](https://holesail.io/) — The original HoleSail project (Layer 4)
-- [Keet](https://keet.io/) — P2P video chat built on Hyperswarm
-- [Hyperswarm](https://hyperswarm.org/) — P2P networking abstraction
-
----
-
-<p align="center">
-  <strong>Connect directly through NAT. No port forwarding. No compromises.</strong>
-</p>
+- [HoleSail](https://holesail.io/) — The original Layer 4 project
