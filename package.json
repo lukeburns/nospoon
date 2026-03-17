@@ -19,7 +19,17 @@
   ],
   "author": "Vaios K",
   "license": "GPL-3.0-only",
-  "files": ["bin/", "lib/", "README.md", "LICENSE"],
+  "files": [
+    "bin/",
+    "lib/client.js",
+    "lib/framing.js",
+    "lib/full-tunnel.js",
+    "lib/routing.js",
+    "lib/server.js",
+    "lib/tun.js",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "commonjs",
   "dependencies": {
     "hyperdht": "^6.29.1",
