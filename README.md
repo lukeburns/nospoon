@@ -10,7 +10,7 @@ A peer-to-peer VPN that **eliminates the need for a publicly reachable server**.
 sudo npm install -g nospoon
 ```
 
-Requires Linux and Node.js 18+. Root needed for TUN device creation.
+Requires Linux or macOS and Node.js 18+. Root needed for TUN device creation.
 
 ## Use Cases
 
@@ -104,7 +104,7 @@ All traffic is end-to-end encrypted. No data passes through the DHT — it's onl
 
 - **Symmetric NAT** — both peers behind symmetric NAT may fail to connect
 - **DNS** — no built-in DNS push; configure manually
-- **Linux only** on main branch — macOS support is on the [`macos-support`](https://github.com/jjacke13/nospoon/tree/macos-support) branch (tested on Mac mini M4, macOS Tahoe)
+- **macOS** — tested on Mac mini M4, macOS Tahoe
 
 ## License
 
