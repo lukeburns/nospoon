@@ -103,7 +103,7 @@ All traffic is end-to-end encrypted. No data passes through the DHT — it's onl
 ## Limitations
 
 - **Symmetric NAT** — both peers behind symmetric NAT may fail to connect
-- **DNS in full-tunnel mode** — DNS is not automatically switched. On Linux with systemd-resolved (127.0.0.53) it usually works because queries are forwarded through the tunnel via NAT. On macOS or Linux with a LAN DNS server (e.g. router at 192.168.1.1), DNS queries may fail. Workaround: manually set DNS to a public resolver (e.g. `1.1.1.1`)
+- **DNS in full-tunnel mode** — DNS is automatically switched to `1.1.1.1` / `8.8.8.8` when full-tunnel is active. Custom DNS servers (e.g. a local Pi-hole) are not yet supported — a `--dns` flag with host route exemption is planned
 - **macOS** — tested on Mac mini M4, macOS Tahoe
 
 ## License
