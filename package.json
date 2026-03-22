@@ -1,6 +1,6 @@
 {
   "name": "nospoon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "P2P VPN over HyperDHT - WireGuard-like interface using Hyperswarm",
   "main": "lib/server.js",
   "bin": {
@@ -24,9 +24,13 @@
     "lib/client.js",
     "lib/framing.js",
     "lib/full-tunnel.js",
+    "lib/full-tunnel-linux.js",
+    "lib/full-tunnel-darwin.js",
     "lib/routing.js",
     "lib/server.js",
     "lib/tun.js",
+    "lib/tun-linux.js",
+    "lib/tun-darwin.js",
     "README.md",
     "LICENSE"
   ],
