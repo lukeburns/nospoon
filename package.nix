@@ -1,16 +1,16 @@
 {
   lib,
+  stdenv,
   buildNpmPackage,
-  nodejs,
   makeWrapper,
-  iptables,
-  iproute2,
-  procps,
+  iptables ? null,
+  iproute2 ? null,
+  procps ? null,
 }:
 
 buildNpmPackage rec {
   pname = "nospoon";
-  version = "0.1.0";
+  version = "0.2.0";
 
   src = lib.fileset.toSource {
     root = ./.;
@@ -28,13 +28,11 @@ buildNpmPackage rec {
   makeCacheWritable = true;
   dontNpmBuild = true;
 
-  nativeBuildInputs = [
-    makeWrapper
-  ];
+  nativeBuildInputs = [ makeWrapper ];
 
-  # Wrap the binary so runtime tools are on PATH.
-  # The tool calls iptables, ip (iproute2), and sysctl (procps) via execFileSync.
-  postInstall = ''
+  # Linux: wrap with iptables, ip, sysctl — Nix store paths not on system PATH
+  # macOS: pfctl, route, networksetup, sysctl are in /usr/sbin already on PATH
+  postInstall = lib.optionalString stdenv.isLinux ''
     wrapProgram "$out/bin/${pname}" \
       --prefix PATH : "${lib.makeBinPath [ iptables iproute2 procps ]}"
   '';
@@ -43,6 +41,6 @@ buildNpmPackage rec {
     description = "P2P VPN over HyperDHT — WireGuard-like interface using Hyperswarm";
     license = lib.licenses.gpl3Only;
     mainProgram = "nospoon";
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }
