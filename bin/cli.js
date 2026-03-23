@@ -3,6 +3,7 @@
 const net = require('net')
 const { startServer } = require('../lib/server')
 const { startClient } = require('../lib/client')
+const { collectAssignedIpv4Addresses, pickFreeTenDotZeroSubnet } = require('../lib/ip-subnet')
 
 const args = process.argv.slice(2)
 const command = args[0]
@@ -79,6 +80,9 @@ function parseFlags (args) {
       flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
     } else if (args[i] === '--peer-ip' && args[i + 1]) {
       flags.peerIp = validatePeerIpv4(args[++i], '--peer-ip')
+      flags.peerIpExplicit = true
+    } else if (args[i] === '--auto-ip') {
+      flags.autoIp = true
     } else if (args[i] === '--full-tunnel') {
       flags.fullTunnel = true
     } else if (args[i] === '--out-interface' && args[i + 1]) {
@@ -86,6 +90,51 @@ function parseFlags (args) {
     }
   }
   return flags
+}
+
+function applyServerAutoIp (flags) {
+  if (!flags.autoIp) return
+  if (flags.config) {
+    console.error('Error: --auto-ip cannot be used with --config (fixed peer subnets)')
+    process.exit(1)
+  }
+  if (flags.ip) {
+    console.error('Error: do not combine --auto-ip with --ip')
+    process.exit(1)
+  }
+  const assigned = collectAssignedIpv4Addresses()
+  let picked
+  try {
+    picked = pickFreeTenDotZeroSubnet(assigned)
+  } catch (e) {
+    console.error('Error:', e.message)
+    process.exit(1)
+  }
+  flags.ip = picked.cidr
+  console.log(`Auto IP: using ${flags.ip}`)
+}
+
+function applyClientAutoIp (flags) {
+  if (!flags.autoIp) return
+  if (flags.ip) {
+    console.error('Error: do not combine --auto-ip with --ip')
+    process.exit(1)
+  }
+  if (flags.peerIpExplicit) {
+    console.error('Error: do not combine --auto-ip with --peer-ip')
+    process.exit(1)
+  }
+  const assigned = collectAssignedIpv4Addresses()
+  let picked
+  try {
+    picked = pickFreeTenDotZeroSubnet(assigned)
+  } catch (e) {
+    console.error('Error:', e.message)
+    process.exit(1)
+  }
+  flags.ip = picked.cidr
+  flags.peerIp = picked.peerAlias
+  console.log(`Auto IP: using ${flags.ip}, hub alias ${flags.peerIp}`)
 }
 
 /** Server: options first, then zero or more 64-hex peer public keys (firewall + incremental aliases). */
@@ -108,6 +157,8 @@ function parseServerArgs (args) {
       flags.fullTunnel = true
     } else if (a === '--out-interface' && args[i + 1]) {
       flags.outInterface = args[++i]
+    } else if (a === '--auto-ip') {
+      flags.autoIp = true
     } else if (a.startsWith('--')) {
       console.error(`Error: unknown server option: ${a}`)
       process.exit(1)
@@ -148,6 +199,7 @@ Usage:
 
 Server options (must come before any positional keys):
   --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
+  --auto-ip             Pick first free 10.0.x.1/24 from local interface addresses (not with --ip or --config)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::1/64)
   --seed <hex>          64-char hex seed for deterministic server key
   --config <path>       Path to peers.json (fixed IP per key; raw IPv4 wire). Not with positional keys.
@@ -160,6 +212,7 @@ Server options (must come before any positional keys):
 
 Client options:
   --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
+  --auto-ip             Pick first free 10.0.x.1/24 and matching hub alias 10.0.x.2 (not with --ip or --peer-ip)
   --peer-ip <addr>      Local alias for the peer’s key, same numbering as the other host (default: 10.0.0.2)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::2/64)
   --seed <hex>          64-char hex client seed (for authenticated mode)
@@ -216,6 +269,7 @@ async function main () {
       process.exit(1)
     }
     flags.allowedKeys = keys
+    applyServerAutoIp(flags)
     await startServer(flags)
   } else if (command === 'client') {
     const key = args[1]
@@ -227,6 +281,7 @@ async function main () {
     validateHex64(key, 'public key')
     const flags = parseFlags(args.slice(2))
     flags.key = key
+    applyClientAutoIp(flags)
     await startClient(flags)
   } else {
     console.error(`Unknown command: ${command}`)
