@@ -32,6 +32,7 @@
     "lib/full-tunnel-darwin.js",
     "lib/routing.js",
     "lib/server.js",
+    "lib/swarm-mesh.js",
     "lib/tun.js",
     "lib/tun-linux.js",
     "lib/tun-darwin.js",
@@ -41,6 +42,7 @@
   "type": "commonjs",
   "dependencies": {
     "hyperdht": "^6.29.1",
+    "hyperswarm": "^4.17.0",
     "koffi": "^2.15.2"
   }
 }

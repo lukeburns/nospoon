@@ -3,6 +3,7 @@
 const net = require('net')
 const { startServer } = require('../lib/server')
 const { startClient } = require('../lib/client')
+const { startSwarmMesh } = require('../lib/swarm-mesh')
 const { collectAssignedIpv4Addresses, pickFreeTenDotZeroSubnet } = require('../lib/ip-subnet')
 
 const args = process.argv.slice(2)
@@ -188,6 +189,28 @@ function parseServerArgs (args) {
   return { flags, keys }
 }
 
+/** Swarm: options only (topic is positional before flags). */
+function parseSwarmFlags (args) {
+  const flags = {}
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--ip' && args[i + 1]) {
+      flags.ip = validateCidr(args[++i], '--ip')
+    } else if (args[i] === '--seed' && args[i + 1]) {
+      flags.seed = validateHex64(args[++i], '--seed')
+    } else if (args[i] === '--mtu' && args[i + 1]) {
+      flags.mtu = validateMtu(args[++i])
+    } else if (args[i] === '--ipv6' && args[i + 1]) {
+      flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
+    } else if (args[i] === '--auto-ip') {
+      flags.autoIp = true
+    } else if (args[i].startsWith('--')) {
+      console.error(`Error: unknown swarm option: ${args[i]}`)
+      process.exit(1)
+    }
+  }
+  return flags
+}
+
 function printUsage () {
   console.log(`
 nospoon - P2P VPN over HyperDHT
@@ -195,6 +218,7 @@ nospoon - P2P VPN over HyperDHT
 Usage:
   nospoon server [options] [<key> ...]   Start a VPN server (optional peer key allowlist)
   nospoon client <key> [options]          Connect to a VPN server
+  nospoon swarm <topic> [options]        Hyperswarm topic mesh (pairwise; topic = capability)
   nospoon genkey                          Generate a client seed + public key
 
 Server options (must come before any positional keys):
@@ -218,6 +242,13 @@ Client options:
   --seed <hex>          64-char hex client seed (for authenticated mode)
   --mtu <num>           MTU size (default: 1400)
   --full-tunnel         Route all internet traffic through the VPN
+
+Swarm options:
+  --ip <cidr>           TUN IPv4 (default: 10.0.0.1/24)
+  --auto-ip             Pick first free 10.0.x.1/24 (not with --ip)
+  --ipv6 <cidr>         TUN IPv6 (e.g. fd00::1/64)
+  --seed <hex>          Deterministic swarm identity
+  --mtu <num>           MTU (default: 1400)
 
 Examples:
   # Authenticated mode (recommended)
@@ -283,6 +314,15 @@ async function main () {
     flags.key = key
     applyClientAutoIp(flags)
     await startClient(flags)
+  } else if (command === 'swarm') {
+    const topic = args[1]
+    if (!topic || topic.startsWith('--')) {
+      console.error('Error: topic string required (e.g. nospoon swarm my-lan-name)')
+      process.exit(1)
+    }
+    const flags = parseSwarmFlags(args.slice(2))
+    applyServerAutoIp(flags)
+    await startSwarmMesh({ topic, ...flags })
   } else {
     console.error(`Unknown command: ${command}`)
     printUsage()
