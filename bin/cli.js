@@ -88,23 +88,75 @@ function parseFlags (args) {
   return flags
 }
 
+/** Server: options first, then zero or more 64-hex peer public keys (firewall + incremental aliases). */
+function parseServerArgs (args) {
+  const flags = {}
+  let i = 0
+  while (i < args.length) {
+    const a = args[i]
+    if (a === '--ip' && args[i + 1]) {
+      flags.ip = validateCidr(args[++i], '--ip')
+    } else if (a === '--seed' && args[i + 1]) {
+      flags.seed = validateHex64(args[++i], '--seed')
+    } else if (a === '--mtu' && args[i + 1]) {
+      flags.mtu = validateMtu(args[++i])
+    } else if (a === '--config' && args[i + 1]) {
+      flags.config = args[++i]
+    } else if (a === '--ipv6' && args[i + 1]) {
+      flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
+    } else if (a === '--full-tunnel') {
+      flags.fullTunnel = true
+    } else if (a === '--out-interface' && args[i + 1]) {
+      flags.outInterface = args[++i]
+    } else if (a.startsWith('--')) {
+      console.error(`Error: unknown server option: ${a}`)
+      process.exit(1)
+    } else {
+      break
+    }
+    i++
+  }
+
+  const seen = new Set()
+  const keys = []
+  while (i < args.length) {
+    if (args[i].startsWith('--')) {
+      console.error('Error: server options must come before peer public keys')
+      process.exit(1)
+    }
+    const k = validateHex64(args[i], `peer key ${keys.length + 1}`).toLowerCase()
+    if (seen.has(k)) {
+      console.warn(`Warning: duplicate peer key ignored (${k.slice(0, 8)}...)`)
+    } else {
+      seen.add(k)
+      keys.push(k)
+    }
+    i++
+  }
+
+  return { flags, keys }
+}
+
 function printUsage () {
   console.log(`
 nospoon - P2P VPN over HyperDHT
 
 Usage:
-  nospoon server [options]           Start a VPN server
-  nospoon client <key> [options]     Connect to a VPN server
-  nospoon genkey                     Generate a client seed + public key
+  nospoon server [options] [<key> ...]   Start a VPN server (optional peer key allowlist)
+  nospoon client <key> [options]          Connect to a VPN server
+  nospoon genkey                          Generate a client seed + public key
 
-Server options:
+Server options (must come before any positional keys):
   --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::1/64)
   --seed <hex>          64-char hex seed for deterministic server key
-  --config <path>       Path to peers.json for client authentication
+  --config <path>       Path to peers.json (fixed IP per key; raw IPv4 wire). Not with positional keys.
   --mtu <num>           MTU size (default: 1400)
   --full-tunnel         Enable NAT so clients can access the internet
   --out-interface <if>  Outgoing interface for NAT (default: auto-detect)
+
+  Positional <key> ...  Remote client public keys allowed to connect (firewall). Server auto-assigns
+                          aliases .2, .3, … in the --ip subnet (key-address on IPv4 wire). Omit for open mode.
 
 Client options:
   --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
@@ -124,7 +176,10 @@ Examples:
   sudo nospoon server --full-tunnel --config peers.json
   sudo nospoon client <server-key> --seed <seed> --full-tunnel
 
-  # Open mode (testing only — no peer authentication; server assigns aliases .2, .3, …)
+  # Allowlist hub (only these client keys; incremental aliases like open mode)
+  sudo nospoon server <client-a-pubkey-hex> <client-b-pubkey-hex>
+
+  # Open mode (any client; server assigns aliases .2, .3, …)
   sudo nospoon server
   sudo nospoon client <public-key>
 
@@ -155,7 +210,12 @@ async function main () {
   }
 
   if (command === 'server') {
-    const flags = parseFlags(args.slice(1))
+    const { flags, keys } = parseServerArgs(args.slice(1))
+    if (flags.config && keys.length) {
+      console.error('Error: do not combine --config with positional peer keys')
+      process.exit(1)
+    }
+    flags.allowedKeys = keys
     await startServer(flags)
   } else if (command === 'client') {
     const key = args[1]
