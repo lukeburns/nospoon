@@ -8,7 +8,8 @@
   },
   "scripts": {
     "server": "node bin/cli.js server",
-    "client": "node bin/cli.js client"
+    "client": "node bin/cli.js client",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "p2p",
@@ -23,6 +24,7 @@
     "bin/",
     "lib/client.js",
     "lib/framing.js",
+    "lib/key-address.js",
     "lib/full-tunnel.js",
     "lib/full-tunnel-linux.js",
     "lib/full-tunnel-darwin.js",
