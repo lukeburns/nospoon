@@ -1,13 +1,14 @@
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { topicKeyFromString } = require('../lib/swarm-mesh')
+const { swarmDiscoveryKey, normalizeTopicBytes } = require('../lib/swarm-mesh')
 
 describe('swarm-mesh', function () {
-  it('topicKeyFromString is 32-byte sha256', function () {
-    const k = topicKeyFromString('hello')
+  it('swarmDiscoveryKey is 32-byte blake2b over domain + topic', function () {
+    const k = swarmDiscoveryKey('hello')
     assert.equal(k.length, 32)
-    const k2 = topicKeyFromString('hello')
+    const k2 = swarmDiscoveryKey('hello')
     assert.ok(k.equals(k2))
-    assert.ok(!k.equals(topicKeyFromString('goodbye')))
+    assert.ok(!k.equals(swarmDiscoveryKey('goodbye')))
+    assert.ok(k.equals(swarmDiscoveryKey(normalizeTopicBytes('hello'))))
   })
 })

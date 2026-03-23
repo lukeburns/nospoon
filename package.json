@@ -33,6 +33,7 @@
     "lib/routing.js",
     "lib/server.js",
     "lib/swarm-mesh.js",
+    "lib/swarm-topic.js",
     "lib/tun.js",
     "lib/tun-linux.js",
     "lib/tun-darwin.js",
@@ -41,6 +42,7 @@
   ],
   "type": "commonjs",
   "dependencies": {
+    "hypercore-crypto": "^3.6.1",
     "hyperdht": "^6.29.1",
     "hyperswarm": "^4.17.0",
     "koffi": "^2.15.2"
