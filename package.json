@@ -24,6 +24,8 @@
     "bin/",
     "lib/client.js",
     "lib/framing.js",
+    "lib/hub-directory.js",
+    "lib/ip-subnet.js",
     "lib/key-address.js",
     "lib/full-tunnel.js",
     "lib/full-tunnel-linux.js",
