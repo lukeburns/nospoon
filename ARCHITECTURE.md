@@ -14,59 +14,108 @@ using a DHT (Distributed Hash Table) for discovery and NAT hole-punching.
 Once connected, they exchange raw IP packets through a TUN device — a
 virtual network interface that the operating system treats like a real one.
 
+Hub/spoke example (defaults: `--ip 10.0.0.1/24`, client `--peer-ip 10.0.0.2`).
+Each side has its **own** `10.0.0.1/24` on `tun0` (this host in the VPN). The
+client reaches the hub at the **local alias** for the hub’s public key
+(default **10.0.0.2**), not at `10.0.0.1` (that is the client’s address on its
+TUN). IPv4 inside the tunnel uses **key-address** encoding on the wire.
+
 ```
- Machine A                          Machine B
-+-----------+                     +-----------+
-|  App      |                     |  App      |
-|  (curl)   |                     |  (nginx)  |
-+-----+-----+                     +-----+-----+
-      |                                 |
-      | normal socket                   | normal socket
-      |                                 |
-+-----+-----+                     +-----+-----+
-|  tun0     |                     |  tun0     |
-| 10.0.0.2  |                     | 10.0.0.1  |
-+-----+-----+                     +-----+-----+
-      |                                 |
-      | raw IP packets                  | raw IP packets
-      |                                 |
-+-----+-----+                     +-----+-----+
-|  nospoon  |-------- DHT --------|  nospoon  |
-|  client   |   encrypted stream  |  server   |
-+-----------+                     +-----------+
+ Machine A (client)                         Machine B (hub / server)
++------------------+                       +------------------+
+| App (e.g. curl)  |                       | App (e.g. nginx) |
+| dst 10.0.0.2     |                       | listen 10.0.0.1  |
++--------+---------+                       +--------+---------+
+         | normal IPv4 to hub alias                  ^
+         | (same /24; .1 = self, .2 = hub key)       | normal socket
++--------v---------+                       +---------+--------+
+| tun0             |                       | tun0             |
+| address 10.0.0.1 |                       | address 10.0.0.1 |
+| (this machine)   |                       | (hub)            |
++--------+---------+                       +---------+--------+
+         | raw IP (dst 10.0.0.2)                     | raw IP
+         | key-address wrap + length frame           | unwrap → raw IP
++--------v---------+   Noise-encrypted    +---------v--------+
+| nospoon client   | <===== DHT =========> | nospoon server   |
++------------------+     stream           +------------------+
+                              ^
+         Spokes get .2, .3, … on the hub; hub directory can tell clients
+         other spokes’ keys so they can assign more local aliases.
 ```
 
-When Machine A's curl sends a packet to 10.0.0.1, the OS routes it to tun0.
-nospoon reads it, wraps it in a length-prefixed frame, sends it over the
-encrypted DHT stream. The server receives it, unwraps it, writes it to its
-tun0. The OS delivers it to nginx. The reply takes the reverse path.
+When Machine A’s app sends traffic **to the hub alias** (default **10.0.0.2**),
+the OS delivers it to `tun0`. nospoon **key-address**-encodes IPv4, adds length
+framing, and sends on the **Noise** stream. The hub decodes and writes to its
+`tun0` when the destination is the hub (or another path that is not a
+forwarded spoke). Replies use the same machinery in reverse.
+
+IPv4 on the wire uses **key-address** encoding (see `key-address.js`): IP
+headers are translated to/from public keys inside the tunnel. IPv6 passes
+through unchanged on the wire in the current design.
+
+
+## Operating modes
+
+### Hub / spoke (`server` + `client`)
+
+One process runs **`nospoon server`** (the hub). Others run
+**`nospoon client <hub-public-key>`** and connect with HyperDHT to that
+public key. In **open** mode the hub assigns incremental peer aliases
+(`.2`, `.3`, …) in its `--ip` subnet and registers them in a key-address
+table. **Authenticated** mode uses `--config` (`peers.json`) or positional
+peer keys so only listed keys connect and each has a fixed alias IP.
+
+The hub may **broadcast a directory** (see `hub-directory.js`) listing the
+public keys of connected spokes. Clients use that list to assign **local**
+aliases and register other spokes for **spoke-to-spoke** traffic—without a
+global IP namespace.
+
+### Topic mesh (`swarm`)
+
+**`nospoon swarm <topic>`** joins a **Hyperswarm** topic. The topic string
+is hashed with **SHA-256** (UTF-8) to a 32-byte topic buffer. **Possessing
+the topic string is the capability** to discover and dial peers on that
+overlay; each pairwise stream is still **Noise-encrypted**. There is no
+separate hub process: every participant runs the same mesh logic. **One
+topic per process**, **pairwise** IPv4 forwarding only (no application-level
+relay of tun frames through a third peer). Mappings from public key to
+local IPv4 alias are **ephemeral** for now (no persistence across restarts).
+
+### `--auto-ip` (server, client, swarm)
+
+Optional: read addresses already assigned on local interfaces (`os.networkInterfaces`)
+and pick the first free **`10.0.n.1/24`** in `10.0.0.0/16`. For **client**,
+the hub alias defaults to **`10.0.n.2`** for the same `n`. Cannot be
+combined with `--ip`, or with `--config` / `--peer-ip` where applicable.
 
 
 ## File Map
 
 ```
 bin/
-  cli.js              CLI entry point, argument parsing, validation
+  cli.js              CLI: server, client, swarm, genkey; validation; --auto-ip
 
 lib/
-  server.js           DHT server, TUN device, packet routing between clients
-  client.js           DHT client, auto-reconnect, TUN device
-  framing.js          Length-prefix framing for packets over byte streams
-  routing.js          IP packet parser + route table (ip -> connection)
-  tun.js              Platform dispatcher (loads tun-linux or tun-darwin)
-  tun-linux.js        Linux TUN via /dev/net/tun + ioctl
-  tun-darwin.js       macOS TUN via utun kernel control socket
-  full-tunnel.js      Platform dispatcher (loads full-tunnel-linux or -darwin)
-  full-tunnel-linux.js   Linux: iptables NAT, ip route, rp_filter
-  full-tunnel-darwin.js  macOS: pfctl NAT, route command, no rp_filter
-  validation.js       Standalone validation functions (for testing)
+  server.js           HyperDHT server, TUN, key-address, hub directory broadcast
+  client.js           HyperDHT client, TUN, hub directory apply, auto-reconnect
+  swarm-mesh.js       Hyperswarm topic mesh: TUN, pairwise key-address, no hub
+  key-address.js      IPv4/IPv6 key-address wire encode/decode; key ↔ alias maps
+  hub-directory.js    In-band hub peer-list frames (JSON) for spoke discovery
+  ip-subnet.js        Subnet math, peer IP allocator, --auto-ip address scan
+  framing.js          Length-prefix framing; keepalives
+  routing.js          readSourceIp / readDestinationIp; router (key → connection)
+  tun.js              Platform dispatcher (tun-linux or tun-darwin)
+  tun-linux.js        Linux TUN via /dev/net/tun + ioctl + ip(8)
+  tun-darwin.js       macOS utun via PF_SYSTEM + ifconfig + route
+  full-tunnel.js      Platform dispatcher (full-tunnel-linux or -darwin)
+  full-tunnel-linux.js   Linux: iptables NAT, split routes, rp_filter
+  full-tunnel-darwin.js  macOS: pfctl NAT, split routes
 
 test/
-  routing.test.js     Tests for IP parsing and router
-  framing.test.js     Tests for encode/decode, overflow, keepalives
-  validation.test.js  Tests for input validation functions
-  peers-config.test.js  Tests for peer config loading + subnet validation
-  server-logic.test.js  Integration tests with mock connections
+  key-address.test.js   Key-address round-trip; unwrap null on stale peer
+  hub-directory.test.js Directory frame magic + JSON round-trip
+  ip-subnet.test.js     Auto 10.0.x.1 picking
+  swarm-mesh.test.js    Topic hash helper
 ```
 
 
@@ -78,13 +127,14 @@ test/
 sudo nospoon server --config peers.json
 ```
 
-1. `cli.js` parses arguments, calls `startServer()` in `server.js`
-2. `startServer()` generates a key pair from a random seed (or --seed)
-3. Creates a TUN device via `createTunDevice()` — assigns IP, sets MTU
-4. Creates a `router` — an in-memory map of `ip -> connection`
+1. `cli.js` parses arguments, optional `--auto-ip`, calls `startServer()`
+2. `startServer()` generates a key pair from a random seed (or `--seed`)
+3. Creates a TUN via `createTunDevice()` — assigns IP, sets MTU
+4. Creates a `router` and, in open or allowlist hub mode, a **key-address**
+   table plus peer IP allocator / hub directory state as needed
 5. Loads `peers.json` if provided — validates IPs against the server subnet
 6. Creates a HyperDHT server with a `firewall` callback
-7. Listens on the DHT — the server is now discoverable by its public key
+7. Listens on the DHT — the server is discoverable by its public key
 
 ### 2. Client connects
 
@@ -92,38 +142,40 @@ sudo nospoon server --config peers.json
 sudo nospoon client <server-public-key> --seed <client-seed>
 ```
 
-1. `cli.js` parses arguments, calls `startClient()` in `client.js`
-2. Creates a TUN device (e.g. 10.0.0.2/24)
-3. Calls `dht.connect(serverPublicKey)` — the DHT finds the server,
-   punches through NATs, establishes an encrypted Noise stream
-4. The server's `firewall` callback fires:
-   - Authenticated mode: checks if the client's public key is in `peers.json`
-   - Open mode: allows everyone
-5. On success, the `connection` event fires on the server
+1. `cli.js` parses arguments, optional `--auto-ip`, calls `startClient()`
+2. Creates a TUN (e.g. `10.0.0.1/24` with hub at `--peer-ip`)
+3. Calls `dht.connect(serverPublicKey)` — NAT traversal, Noise stream
+4. The server's `firewall` runs (auth vs open)
+5. On `open`, client registers the hub key at the local alias IP, may apply
+   hub directory updates for other spokes
 
 ### 3. Packets flow
 
-**Client -> Server:**
-1. App on client sends packet to 10.0.0.1
+**Client -> Server (IPv4 key-address):**
+1. App on client sends packet to the hub alias (e.g. 10.0.0.2 in open mode with `--peer-ip`)
 2. OS routes it to tun0 (because 10.0.0.0/24 is routed there)
-3. `tun.on('data')` fires in client.js with the raw IP packet
-4. Client calls `encode(packet)` — prepends 4-byte length header
-5. Client writes the frame to the DHT connection (encrypted stream)
-6. Server receives data, `decode()` reassembles the frame
-7. Server reads the source IP from the packet header
-8. Server validates the source IP (must match assigned IP in auth mode)
-9. Server reads the destination IP:
-   - If dest is another client: forward directly (client-to-client)
-   - Otherwise: write to server's TUN (server or external destination)
+3. `tun.on('data')` fires in `client.js` with the raw IPv4 packet
+4. Client calls `wrapTunnelPayload(ka, packet)` — replaces IPv4 header src/dst with
+   wire key material (`key-address.js`), then `encode()` prepends the 4-byte length
+5. Client writes the frame to the DHT connection (Noise-encrypted stream)
+6. Server receives data; `createDecoder` reassembles the frame; directory frames
+   (if any) are skipped before tunnel decode
+7. Server calls `unwrapTunnelPayload` → `ka.decode` to recover a normal IPv4 packet
+8. Server validates source IP matches this client's assigned alias (open or auth mode)
+9. Server reads the destination IP; `router.getConnectionForDestination` uses the
+   key-address table to map dest IP → peer key → live connection:
+   - If dest is another client: forward on that connection (re-wrap with `wrapTunnelPayload`)
+   - Else: write to the server's TUN (hub or external path)
 10. OS on server delivers the packet to the destination app
 
-**Server -> Client:**
-1. Reply packet arrives on server's TUN
-2. Server reads destination IP from packet header
-3. Looks up the connection in the router (`router.getByIp()`)
-4. Encodes and sends the frame over the DHT stream
-5. Client decodes it and writes the raw packet to its TUN
-6. OS delivers it to the app that sent the original request
+**Server -> Client:** Same pipeline in reverse: TUN read → map dest IP to client
+connection → length frame → client unwraps → TUN write.
+
+**Stale peers:** After a peer disconnects, their key is unregistered. Any in-flight
+IPv4 frame that still references that key cannot be decoded; `unwrapTunnelPayload`
+returns `null` and the frame is dropped (no process crash).
+
+**IPv6:** Not key-address wrapped; passes through the tunnel as raw IPv6 packets.
 
 
 ## Core Modules in Detail
@@ -153,6 +205,12 @@ will call `onPacket(packet)` for each complete frame. Handles:
 - **Keepalives**: length=0 frames are silently ignored
 - **Overflow protection**: if the internal buffer exceeds 256KB, it's reset
 - **Invalid lengths**: frames claiming >65535 bytes are dropped
+
+**Multiplexing (hub only):** Frames whose payload is **not** a normal IPv4/IPv6
+packet may carry side channels. The hub directory uses a payload that begins
+with bytes **`0x00 0x01`** (invalid as IPv4/IPv6 first byte), followed by UTF-8
+JSON listing peer public keys (`hub-directory.js`). The server never decodes
+these as tunnel traffic; clients consume them to register spoke aliases.
 
 ```
 startKeepalive(connection)
@@ -186,30 +244,19 @@ The version is extracted from the first 4 bits: `(packet[0] >>> 4) & 0x0f`
 
 **`createRouter()`**
 
-Returns an object with a simple Map-based route table:
-- `add(ip, connection)` — register a client
-- `remove(ip)` — unregister a client
-- `getByIp(ip)` — look up which connection owns an IP
-- `getIpByKey(publicKeyHex)` — reverse lookup: find IP by public key
-- `activeCount()` — how many clients are connected
+Returns an object with a Map **`remotePublicKeyHex → HyperDHT/Noise connection`**:
+- `addPeer(publicKey, connection)` — register a client for forwarding
+- `removePeer(publicKey)` — unregister when the stream closes
+- `getConnectionForDestination(destIp, ctx)` — uses `ctx.ka` (key-address table)
+  or `ctx.ipToKeyHex` (auth mode) to resolve destination IP to a peer key, then
+  looks up the live connection. Packets to the local key return `null` so they
+  are not mistaken for remote peers.
+- `activeCount()` — number of routed peers
+
+Subnet math and peer **IP allocation** live in **`ip-subnet.js`**, not here.
 
 
 ### server.js — The Server
-
-**`ipToInt(ip)`** — Converts "10.0.0.1" to a 32-bit integer for bitwise
-subnet math.
-
-**`parseSubnet(cidr)`** — Parses "10.0.0.1/24" into:
-```
-{
-  hostIp:    167772161,  // 10.0.0.1 as integer
-  network:   167772160,  // 10.0.0.0 (first address)
-  broadcast: 167772415,  // 10.0.0.255 (last address)
-  mask:      4294967040, // 255.255.255.0
-  prefix:    24
-}
-```
-Used to validate that peer IPs are within the server's subnet.
 
 **`loadPeers(configPath, serverCidr)`** — Reads peers.json, validates:
 - Each key is a 64-char hex public key
@@ -221,57 +268,80 @@ Used to validate that peer IPs are within the server's subnet.
 
 Returns a `Map<publicKeyHex, ipAddress>`.
 
-**`startServer(opts)`** — The main function:
+**Open mode (`--config` absent and no fixed peer map):** builds a
+`createKeyAddressTable` for the hub and a **`createPeerIpAllocator`** from
+`ip-subnet.js` to hand out `.2`, `.3`, … in the hub subnet. Each new
+connection registers that alias and the client's public key **before** any
+tunnel decode. **`broadcastHubDirectory()`** pushes an updated peer list to
+all hub connections when someone joins or leaves.
 
-1. **Firewall callback**: Called by HyperDHT during the Noise handshake,
-   BEFORE the connection is established. Returns `true` to reject (confusing
-   but that's the API). In open mode, allows all. In auth mode, checks if
-   the key is in the peers Map.
+**`startServer(opts)`** — Main flow:
 
-2. **Connection handler**: When a client connects:
-   - Auth mode: immediately adds the client to the router with their
-     assigned IP from peers.json
-   - Open mode: waits for the first packet to learn the client's IP
-     (IP learning)
+1. **Firewall callback**: HyperDHT handshake filter. Return `true` to reject.
+   Open mode allows all; `--config` / allowlist restricts by public key.
 
-3. **Packet handler** (inside the decoder callback):
-   ```
-   Authenticated mode:
-     if source IP != assigned IP -> drop (prevents spoofing)
+2. **Connection handler**:
+   - **Auth** (`peers.json` or allowlist with fixed IPs): assign IP from config,
+     add to router and key-address path as implemented.
+   - **Open**: allocate next free alias IP, `ka.register`, `router.addPeer`,
+     join hub directory set, broadcast directory.
 
-   Open mode:
-     if no IP learned yet -> learn from first packet's source IP
-       but first check: is this IP already taken? if yes -> drop
-     if IP already learned and source != learned IP -> drop
-   ```
+3. **Inbound tunnel decoder**: Skip directory frames; `unwrapTunnelPayload`;
+   verify source IP equals this connection's assigned alias; forward to peer
+   or TUN.
 
-4. **Routing**: After validation, reads destination IP:
-   - Destination is another client? Forward directly (peer-to-peer)
-   - Otherwise? Write to TUN (let the OS handle it)
-
-5. **TUN -> clients**: When a packet arrives on the server's TUN, look up
-   the destination IP in the router and send it to the right client.
+4. **TUN → clients**: `readDestinationIp` + `getConnectionForDestination`;
+   `wrapTunnelPayload` + length frame to the right connection.
 
 
 ### client.js — The Client
 
-Simpler than the server. Key concepts:
+**Key-address:** On connect, builds a key-address table with local TUN IP and
+registers the **hub** at `--peer-ip` (default `10.0.0.2`). **`--auto-ip`**
+can pick a free `10.0.n.1/24` and matching hub alias `10.0.n.2`.
 
-**Auto-reconnect with exponential backoff:**
-- Starts at 1 second, doubles each failure, caps at 30 seconds
-- Adds random jitter (0-1s) to prevent thundering herd
+**Hub directory:** When a directory frame arrives, `applyHubDirectory`
+allocates unused aliases in the same subnet and registers other spokes' keys
+so IPv4 can reach them (local aliasing; logs `Hub directory: spoke peer …`).
 
-**Full DHT restart:**
-- After 3 consecutive failures, destroys the entire DHT instance and
-  creates a new one
-- Why? In full-tunnel mode, the split routes direct all traffic through
-  tun0. If the tunnel is dead, DHT lookups (which go to random nodes on
-  the internet) also go through the dead tunnel and fail. By removing the
-  routes and restarting DHT, the client can reach the internet directly
-  to find the server at its (possibly new) IP.
+**Auto-reconnect:** Exponential backoff (1s → 30s cap) with jitter.
 
-**`deriveRemoteIp(clientCidr)`** — Simple helper: if client is 10.0.0.2/24,
-the server must be 10.0.0.1. Just replaces the last octet with 1.
+**Full DHT restart:** After repeated failures in full-tunnel mode, destroys
+the DHT and reconnects so lookups are not stuck behind a dead tunnel route.
+
+### key-address.js — Wire format (summary)
+
+IPv4 on the wire embeds 32-byte Noise public keys for source and destination
+instead of raw IPv4 addresses in the outer frame; decode restores a normal
+IPv4 packet for the kernel. IPv6 uses a similar key header layout for the
+encode path; **tunnel `unwrap` passes IPv6 through without key decode** in
+the current hub/client/swarm paths (first nibble `6`).
+
+### hub-directory.js
+
+Encodes/decodes **directory** payloads: magic `0x00 0x01` + JSON
+`{ "v": 1, "peers": [ { "k": "<hex>" }, … ] }` (sorted unique keys). Used only
+in hub open mode for spoke discovery.
+
+### ip-subnet.js
+
+**`parseSubnet`**, **`ipToInt`**, **`intToIp`**, **`createPeerIpAllocator`**
+(lowest free host in subnet, skipping the TUN host address by default), plus
+**`collectAssignedIpv4Addresses`** and **`pickFreeTenDotZeroSubnet`** for
+`--auto-ip`.
+
+### swarm-mesh.js — Topic mesh
+
+**`topicKeyFromString(s)`** → SHA-256 digest. **`startSwarmMesh`** creates
+`Hyperswarm` (shared HyperDHT stack), **`await swarm.listen()`**,
+**`swarm.join(topicBuf)`**, **`await discovery.flushed()`**. Each
+**`connection`** event wires a Noise stream like the hub: allocate peer IP,
+`ka.register`, `router.addPeer`, length decoder, `unwrapTunnelPayload` /
+`wrapTunnelPayload`, TUN read/write. **Pairwise only.** Reuses an alias IP
+when the same peer reconnects. **`attachConnErrorHandler`** registers an
+`error` listener on each `NoiseSecretStream` so disconnect timeouts do not
+surface as unhandled exceptions. **`safeWrite`** avoids synchronous throws
+when forwarding to a closing peer.
 
 
 ## TUN Device — How It Works
@@ -471,8 +541,9 @@ Server NAT (pfctl):
 | Struct byte order | Little-endian (x86_64) | Little-endian (both x86_64 and ARM64) |
 
 The platform dispatchers (`tun.js`, `full-tunnel.js`) check `os.platform()`
-and load the right module. Everything above them (server.js, client.js,
-framing.js, routing.js) is platform-independent.
+and load the right module. Everything above them (`server.js`, `client.js`,
+`swarm-mesh.js`, `framing.js`, `routing.js`, `key-address.js`) is
+platform-independent aside from OS privileges for TUN and routes.
 
 
 ## Bugs We Found on Real macOS Hardware
@@ -538,29 +609,28 @@ version with `pfctl -f`. On shutdown, restore the original `/etc/pf.conf`.
 ## Security Model
 
 ### Encryption
-All traffic between peers is encrypted using the Noise protocol (built into
-HyperDHT). This is the same protocol used by WireGuard. No plaintext ever
-crosses the internet.
+All DHT streams use **Noise** (via HyperDHT / Hyperswarm). Payloads on the
+wire are encrypted; no application plaintext crosses the internet on those
+streams.
 
-### Authentication (Authenticated Mode)
-- Server has a `peers.json` mapping public keys to IPs
-- `firewall` callback rejects unknown keys BEFORE the Noise handshake
-  completes — the connection is never established
-- Source IP validation: even after authentication, the server checks that
-  each packet's source IP matches the assigned IP. A compromised client
-  can't spoof another client's IP.
+### Authentication (Hub — Authenticated Mode)
+- `peers.json` or allowlist maps public keys to fixed alias IPs
+- `firewall` rejects unknown keys before the session is useful
+- Per-packet source IP must match the assigned alias (spoofing resistance)
 
-### Open Mode (Testing Only)
-- No authentication — anyone who knows the public key can connect
-- Single client only — IP learned from first packet, locked afterward
-- IP collision protection — if a second client tries to claim the same IP,
-  packets are dropped
-- No automatic IP assignment — client must manually choose an unused IP
+### Open Hub Mode
+- Anyone who knows the hub **public key** can connect; the hub assigns
+  incremental **alias IPs** in its subnet (`.2`, `.3`, …)
+- **Hub directory** lists connected spoke keys; clients **trust the hub**
+  for those registrations when creating local aliases for other spokes
+  (same trust model as “I joined this hub”)
 
-### Subnet Validation
-Peer IPs in `peers.json` are validated against the server's CIDR:
-- Must be in the same subnet
-- Cannot be the network address (10.0.0.0)
-- Cannot be the broadcast address (10.0.0.255)
-- Cannot be the server's own IP
-- Cannot be 0.0.0.0 or loopback (127.x.x.x)
+### Topic Mesh (`swarm`)
+- **Topic string** (hashed to 32 bytes) is the **capability** to discover and
+  dial peers on that Hyperswarm topic
+- Pairwise streams are still Noise-encrypted; **topic possession is the
+  membership policy** in the current design (no extra allowlist)
+
+### Subnet Validation (`peers.json`)
+Peer IPs are validated against the server's CIDR (network/broadcast,
+server IP, loopback, etc.); see `loadPeers` in `server.js`.

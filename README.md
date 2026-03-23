@@ -2,7 +2,16 @@
 
 > *"There is no spoon."* — The Matrix (1999)
 
-A peer-to-peer VPN that **eliminates the need for a publicly reachable server**. Built on [HyperDHT](https://github.com/holepunchto/hyperdht) for NAT hole-punching and Noise-encrypted tunnels. No public IP, no port forwarding, no central infrastructure — just a key.
+A peer-to-peer VPN that **does not require a publicly reachable server**. Peers find each other with [HyperDHT](https://github.com/holepunchto/hyperdht) (and optionally [Hyperswarm](https://github.com/holepunchto/hyperswarm) for topic meshes), punch through NAT, and carry IP packets over **Noise-encrypted** streams. No public IP, no port forwarding, no central infra — only keys (and, in swarm mode, a **topic** you share).
+
+**Two shapes:**
+
+| Mode | Command | Idea |
+|------|---------|------|
+| **Hub / spoke** | `server` + `client <hub-key>` | One process is the hub; others dial its public key. Optional `peers.json` or allowlist. |
+| **Topic mesh** | `swarm <topic>` | No hub: same topic string ⇒ same overlay; pairwise tunnels only. |
+
+IPv4 on the wire uses **key-address** encoding (IPs ↔ public keys inside the tunnel). IPv6 passes through without that layer. Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Install
 
@@ -10,22 +19,21 @@ A peer-to-peer VPN that **eliminates the need for a publicly reachable server**.
 sudo npm install -g nospoon
 ```
 
-Requires Linux or macOS and Node.js 18+. Root needed for TUN device creation.
+Requires Linux or macOS and a recent Node.js. Root (or equivalent) is needed for TUN creation and routes.
 
-## Use Cases
+## Use cases
 
-### 1. Expose any service through NAT
+### 1. Reach a machine through NAT (hub / spoke)
 
-Like [HoleSail](https://holesail.io/) but at Layer 3 — instead of forwarding a single port, nospoon creates a full network interface. Every service on the server is reachable by IP, as if you were on the same LAN.
+Like [HoleSail](https://holesail.io/) but at layer 3: a TUN interface so **any** service bound on the VPN side is reachable by IP.
 
 ```bash
-# Generate a client identity
 nospoon genkey
-# Output: Seed (keep secret): abc123...
-#         Public key (share): def456...
+# Save seed and public key
 ```
 
-Create `peers.json` on the server:
+`peers.json` on the **hub** (recommended):
+
 ```json
 {
   "peers": {
@@ -35,76 +43,100 @@ Create `peers.json` on the server:
 ```
 
 ```bash
-# Server (behind NAT, no port forwarding needed)
 sudo nospoon server --config peers.json
-
-# Client (anywhere in the world)
-sudo nospoon client <server-key> --seed <client-seed>
-
-# Access anything on the server
-curl http://10.0.0.1:8080       # web app
-ssh user@10.0.0.1               # SSH
-ping 10.0.0.1                   # ICMP
+sudo nospoon client <server-public-key> --seed <client-seed>
 ```
 
-Using `--config` is recommended — it authenticates clients and assigns fixed IPs. Open mode (`sudo nospoon server` without `--config`) is available for quick testing but has no authentication and only supports a single client.
-
-### 2. Full tunnel — access the internet from home
-
-Route all your internet traffic through your home connection. When you're abroad, your traffic exits from your home IP — access geo-restricted content, use your home network's DNS, or just browse as if you were home.
+**Addresses (defaults):** hub TUN is **10.0.0.1**; client TUN is **10.0.0.1** on the client (each side has its own interface). The client maps the hub at **`--peer-ip`** (default **10.0.0.2**). From the client, reach the hub at **10.0.0.2**, not 10.0.0.1 (that is the client’s own TUN address).
 
 ```bash
-# Server (your home machine)
-sudo nospoon server --full-tunnel --config peers.json
-
-# Client (your laptop abroad)
-sudo nospoon client <key> --seed <seed> --full-tunnel
+curl http://10.0.0.2:8080    # service on hub (adjust port)
+ssh user@10.0.0.2
+ping 10.0.0.2
 ```
 
-Kill switch included: if the tunnel drops, traffic fails instead of leaking.
+**Open hub** (no `--config`): any client may connect; the hub assigns **10.0.0.2**, **10.0.0.3**, … to peers. The hub can **broadcast a directory** of spoke keys so clients can map **local aliases** to other spokes for spoke-to-spoke traffic.
 
-## Command Reference
+**`--auto-ip`:** on one machine running multiple nospoon processes (e.g. hub + client for testing), pick the first free **10.0.x.1/24** from addresses already on local interfaces so subnets do not clash.
 
-### `sudo nospoon server [options]`
+### 2. Full tunnel — exit via the hub
+
+Route all IPv4 internet traffic through the hub (NAT on the server, split routes + host route on the client so DHT still works).
+
+```bash
+sudo nospoon server --full-tunnel --config peers.json
+sudo nospoon client <server-key> --seed <seed> --full-tunnel
+```
+
+If the tunnel drops, the client’s routes avoid plaintext “leak” to the default route (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+### 3. Topic mesh (no hub)
+
+Everyone runs the **same topic string**; it is hashed (SHA-256) to a 32-byte Hyperswarm topic. **Possessing the topic is the join capability**; streams are still Noise-encrypted. Traffic is **pairwise** (no app-level relay of tun frames through a third peer in the current implementation).
+
+```bash
+sudo nospoon swarm my-shared-topic --auto-ip
+```
+
+Ephemeral IP assignment in the chosen subnet; **no** hub directory or `peers.json` in this mode. See [ARCHITECTURE.md](ARCHITECTURE.md) for trust and bind-surface considerations.
+
+## Command reference
+
+### `sudo nospoon server [options] [<peer-key> …]`
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.1/24` | TUN interface IP |
-| `--ipv6 <cidr>` | none | TUN IPv6 address |
-| `--seed <hex>` | random | Deterministic server key |
-| `--config <path>` | none | Path to peers.json |
+| `--ip <cidr>` | `10.0.0.1/24` | Hub TUN IPv4 |
+| `--auto-ip` | off | pick first free `10.0.x.1/24` on this machine (not with `--ip` or `--config`) |
+| `--ipv6 <cidr>` | none | TUN IPv6 |
+| `--seed <hex>` | random | Deterministic hub key |
+| `--config <path>` | none | `peers.json` fixed IPs |
 | `--mtu <num>` | `1400` | TUN MTU |
-| `--full-tunnel` | off | Enable NAT for client internet access |
-| `--out-interface <if>` | auto | Outgoing interface for NAT |
+| `--full-tunnel` | off | NAT for client internet access |
+| `--out-interface <if>` | auto | NAT egress interface |
 
-### `sudo nospoon client <public-key> [options]`
+Positional **`peer-key`** values: allowlist-only firewall (same incremental aliases as open mode).
+
+### `sudo nospoon client <hub-public-key> [options]`
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.2/24` | TUN interface IP |
-| `--ipv6 <cidr>` | none | TUN IPv6 address |
-| `--seed <hex>` | none | Client seed (for auth mode) |
+| `--ip <cidr>` | `10.0.0.1/24` | This host’s TUN address |
+| `--peer-ip <addr>` | `10.0.0.2` | Local alias for the **hub’s** public key |
+| `--auto-ip` | off | pick free `10.0.x.1/24` and set hub alias to `10.0.x.2` (not with `--ip` or `--peer-ip`) |
+| `--ipv6 <cidr>` | none | TUN IPv6 |
+| `--seed <hex>` | none | Client identity (`--config` / allowlist on server) |
 | `--mtu <num>` | `1400` | TUN MTU |
 | `--full-tunnel` | off | Route all traffic through VPN |
 
+### `sudo nospoon swarm <topic> [options]`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ip <cidr>` | `10.0.0.1/24` | This peer’s TUN |
+| `--auto-ip` | off | pick first free `10.0.x.1/24` (not with `--ip`) |
+| `--ipv6 <cidr>` | none | TUN IPv6 |
+| `--seed <hex>` | random | Deterministic peer key |
+| `--mtu <num>` | `1400` | TUN MTU |
+
 ### `nospoon genkey`
 
-Generate a client key pair. No root required.
+Print a random seed and public key. No root.
 
-## How It Works
+## How it works (short)
 
-1. Server announces its public key on the HyperDHT distributed hash table
-2. Client looks up the key, HyperDHT performs UDP hole-punching through both NATs
-3. A Noise-encrypted stream is established (X25519 + ChaCha20-Poly1305 + BLAKE2b)
-4. IP packets flow through TUN devices on both sides, length-framed over the encrypted stream
+1. Peers discover each other via **HyperDHT** (hub/client) or **Hyperswarm** + topic (swarm).
+2. UDP hole-punching (and optional relays at the DHT layer) help establish a **Noise** stream.
+3. IPv4 frames are **key-address**-encoded; length-prefixed frames carry payloads over the stream.
+4. The kernel sees a normal TUN; applications use normal sockets.
 
-All traffic is end-to-end encrypted. No data passes through the DHT — it's only used for peer discovery and hole-punching. In authenticated mode, unauthorized peers are rejected during the Noise handshake before a connection is established.
+Unauthorized peers are rejected in **authenticated** hub mode before useful traffic flows. **Swarm** membership is **who knows the topic**; bind services only to the TUN (or be deliberate with `0.0.0.0`) — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Limitations
 
-- **Symmetric NAT** — both peers behind symmetric NAT may fail to connect
-- **DNS in full-tunnel mode** — DNS is automatically switched to `1.1.1.1` / `8.8.8.8` when full-tunnel is active. Custom DNS servers (e.g. a local Pi-hole) are not yet supported — a `--dns` flag with host route exemption is planned
-- **macOS** — tested on Mac mini M4, macOS Tahoe
+- **Symmetric NAT** — both sides behind symmetric NAT may fail to connect.
+- **DNS in full-tunnel** — DNS is pointed at public resolvers when full-tunnel is active; custom DNS / Pi-hole-style setups are not fully integrated yet.
+- **macOS** — tested on Apple Silicon (M4) and macOS Tahoe; Linux is the primary target.
 
 ## License
 
@@ -113,6 +145,7 @@ GPL-3.0 — See [LICENSE](LICENSE)
 ## Credits
 
 - [HyperDHT](https://github.com/holepunchto/hyperdht) — DHT and hole-punching
-- [koffi](https://koffi.dev/) — FFI for TUN device creation
+- [Hyperswarm](https://github.com/holepunchto/hyperswarm) — Topic-based peer discovery (swarm mode)
+- [koffi](https://koffi.dev/) — FFI for TUN on Linux / macOS
 - [Noise Protocol](https://noiseprotocol.org/) — Encryption framework
-- [HoleSail](https://holesail.io/) — The original Layer 4 project
+- [HoleSail](https://holesail.io/) — Layer-4 inspiration
