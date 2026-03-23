@@ -4,7 +4,8 @@ const {
   createKeyAddressTable,
   computeIpv4HeaderChecksum,
   IPV4_HEADER_LEN,
-  IPV6_HEADER_LEN
+  IPV6_HEADER_LEN,
+  unwrapTunnelPayload
 } = require('../lib/key-address')
 
 const PROTO_ICMP = 1
@@ -292,6 +293,18 @@ describe('key-address', function () {
     assert.deepEqual(table.ipToKey(Buffer.from([10, 0, 0, 3])), keyB)
     // decode uses first registered alias for that key
     assert.equal(table.keyToIp(keyB).join('.'), '10.0.0.2')
+  })
+
+  it('unwrapTunnelPayload returns null after peer unregistered (stale frames)', function () {
+    const src = Buffer.from([10, 0, 0, 1])
+    const dst = Buffer.from([10, 0, 0, 2])
+    const udp = udpPayload({ sport: 1, dport: 2, data: Buffer.alloc(0) })
+    const packet = ipv4Packet({ src, dst, proto: PROTO_UDP, payload: udp })
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    table.register('10.0.0.2', keyB)
+    const wire = table.encode(packet)
+    table.unregister('10.0.0.2')
+    assert.equal(unwrapTunnelPayload(table, wire), null)
   })
 
   it('unregister removes peer mapping so the same IP can be reused', function () {
