@@ -47,7 +47,7 @@ sudo nospoon server --config peers.json
 sudo nospoon client <server-public-key> --seed <client-seed>
 ```
 
-**Addresses (defaults):** hub TUN is **10.0.0.1**; client TUN is **10.0.0.1** on the client (each side has its own interface). The client maps the hub at **`--peer-ip`** (default **10.0.0.2**). From the client, reach the hub at **10.0.0.2**, not 10.0.0.1 (that is the client’s own TUN address).
+**Addresses:** unless you set **`--ip`**, nospoon picks the first free **`10.0.x.1/24`** on the host (from existing interface addresses) and logs it; **`nospoon server --config …`** without **`--ip`** keeps **`10.0.0.1/24`** so `peers.json` stays aligned. Each side’s TUN is **`.1`** in its chosen `/24`. The client maps the hub at **`--peer-ip`** (with auto subnet, **`10.0.x.2`** for the same `x`). From the client, reach the hub at that alias, not at **`.1`** (that is the client’s own TUN address).
 
 ```bash
 curl http://10.0.0.2:8080    # service on hub (adjust port)
@@ -56,8 +56,6 @@ ping 10.0.0.2
 ```
 
 **Open hub** (no `--config`): any client may connect; the hub assigns **10.0.0.2**, **10.0.0.3**, … to peers. The hub can **broadcast a directory** of spoke keys so clients can map **local aliases** to other spokes for spoke-to-spoke traffic.
-
-**`--auto-ip`:** on one machine running multiple nospoon processes (e.g. hub + client for testing), pick the first free **10.0.x.1/24** from addresses already on local interfaces so subnets do not clash.
 
 ### 2. Full tunnel — exit via the hub
 
@@ -72,13 +70,13 @@ If the tunnel drops, the client’s routes avoid plaintext “leak” to the def
 
 ### 3. Topic mesh (no hub)
 
-Everyone runs the **same topic string**; it is hashed (SHA-256) to a 32-byte Hyperswarm topic. **Possessing the topic is the join capability**; streams are still Noise-encrypted. Traffic is **pairwise** (no app-level relay of tun frames through a third peer in the current implementation).
+Everyone shares the **same topic bytes** (string or UTF-8). **Discovery** uses a 32-byte **discovery key** (BLAKE2b over a domain label + topic bytes — same style as Hypercore), so passive DHT observers do not see the raw topic on the wire. **After Noise**, each side proves possession of the topic **preimage** with a hypercore-style capability; a mismatch drops the connection. Traffic is **pairwise** (no app-level relay of tun frames through a third peer in the current implementation).
 
 ```bash
-sudo nospoon swarm my-shared-topic --auto-ip
+sudo nospoon swarm my-shared-topic
 ```
 
-Ephemeral IP assignment in the chosen subnet; **no** hub directory or `peers.json` in this mode. See [ARCHITECTURE.md](ARCHITECTURE.md) for trust and bind-surface considerations.
+Ephemeral IP assignment in the chosen subnet (default: first free **`10.0.x.1/24`** like server/client, or **`--ip`** to fix); **no** hub directory or `peers.json` in this mode. See [ARCHITECTURE.md](ARCHITECTURE.md) for trust and bind-surface considerations.
 
 ## Command reference
 
@@ -86,8 +84,7 @@ Ephemeral IP assignment in the chosen subnet; **no** hub directory or `peers.jso
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.1/24` | Hub TUN IPv4 |
-| `--auto-ip` | off | pick first free `10.0.x.1/24` on this machine (not with `--ip` or `--config`) |
+| `--ip <cidr>` | first free `10.0.x.1/24`* | Hub TUN IPv4; set explicitly to fix e.g. `10.0.0.1/24` |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
 | `--seed <hex>` | random | Deterministic hub key |
 | `--config <path>` | none | `peers.json` fixed IPs |
@@ -95,15 +92,16 @@ Ephemeral IP assignment in the chosen subnet; **no** hub directory or `peers.jso
 | `--full-tunnel` | off | NAT for client internet access |
 | `--out-interface <if>` | auto | NAT egress interface |
 
+\*Unless **`--config`** is used without **`--ip`**, in which case the implicit default is **`10.0.0.1/24`** (matches typical `peers.json` layouts).
+
 Positional **`peer-key`** values: allowlist-only firewall (same incremental aliases as open mode).
 
 ### `sudo nospoon client <hub-public-key> [options]`
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.1/24` | This host’s TUN address |
-| `--peer-ip <addr>` | `10.0.0.2` | Local alias for the **hub’s** public key |
-| `--auto-ip` | off | pick free `10.0.x.1/24` and set hub alias to `10.0.x.2` (not with `--ip` or `--peer-ip`) |
+| `--ip <cidr>` | first free `10.0.x.1/24` | This host’s TUN address; set explicitly to fix e.g. `10.0.0.1/24` |
+| `--peer-ip <addr>` | `10.0.x.2` with auto subnet | Local alias for the **hub’s** public key; if you set **`--peer-ip`**, you must also set **`--ip`** |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
 | `--seed <hex>` | none | Client identity (`--config` / allowlist on server) |
 | `--mtu <num>` | `1400` | TUN MTU |
@@ -113,8 +111,7 @@ Positional **`peer-key`** values: allowlist-only firewall (same incremental alia
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ip <cidr>` | `10.0.0.1/24` | This peer’s TUN |
-| `--auto-ip` | off | pick first free `10.0.x.1/24` (not with `--ip`) |
+| `--ip <cidr>` | first free `10.0.x.1/24` | This peer’s TUN; set explicitly to fix e.g. `10.0.0.1/24` |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
 | `--seed <hex>` | random | Deterministic peer key |
 | `--mtu <num>` | `1400` | TUN MTU |
@@ -130,7 +127,7 @@ Print a random seed and public key. No root.
 3. IPv4 frames are **key-address**-encoded; length-prefixed frames carry payloads over the stream.
 4. The kernel sees a normal TUN; applications use normal sockets.
 
-Unauthorized peers are rejected in **authenticated** hub mode before useful traffic flows. **Swarm** membership is **who knows the topic**; bind services only to the TUN (or be deliberate with `0.0.0.0`) — see [ARCHITECTURE.md](ARCHITECTURE.md).
+Unauthorized peers are rejected in **authenticated** hub mode before useful traffic flows. **Swarm** membership is **who knows the topic preimage** (verified after Noise); bind services only to the TUN (or be deliberate with `0.0.0.0`) — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Limitations
 

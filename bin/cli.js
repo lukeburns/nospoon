@@ -82,8 +82,6 @@ function parseFlags (args) {
     } else if (args[i] === '--peer-ip' && args[i + 1]) {
       flags.peerIp = validatePeerIpv4(args[++i], '--peer-ip')
       flags.peerIpExplicit = true
-    } else if (args[i] === '--auto-ip') {
-      flags.autoIp = true
     } else if (args[i] === '--full-tunnel') {
       flags.fullTunnel = true
     } else if (args[i] === '--out-interface' && args[i + 1]) {
@@ -93,36 +91,17 @@ function parseFlags (args) {
   return flags
 }
 
-function applyServerAutoIp (flags) {
-  if (!flags.autoIp) return
-  if (flags.config) {
-    console.error('Error: --auto-ip cannot be used with --config (fixed peer subnets)')
-    process.exit(1)
-  }
-  if (flags.ip) {
-    console.error('Error: do not combine --auto-ip with --ip')
-    process.exit(1)
-  }
-  const assigned = collectAssignedIpv4Addresses()
-  let picked
-  try {
-    picked = pickFreeTenDotZeroSubnet(assigned)
-  } catch (e) {
-    console.error('Error:', e.message)
-    process.exit(1)
-  }
-  flags.ip = picked.cidr
-  console.log(`Auto IP: using ${flags.ip}`)
-}
-
-function applyClientAutoIp (flags) {
-  if (!flags.autoIp) return
-  if (flags.ip) {
-    console.error('Error: do not combine --auto-ip with --ip')
-    process.exit(1)
-  }
-  if (flags.peerIpExplicit) {
-    console.error('Error: do not combine --auto-ip with --peer-ip')
+/**
+ * Default: first free 10.0.x.1/24 from local interface addresses (avoids clashes between
+ * multiple nospoon processes on one host). Override with --ip <cidr>.
+ * Server + --config: keep implicit 10.0.0.1/24 (peers.json IPs are fixed to that subnet unless --ip).
+ */
+function applyIpv4AutoUnlessExplicit (flags, opts) {
+  const isClient = opts && opts.isClient
+  if (flags.ip) return
+  if (flags.config) return
+  if (isClient && flags.peerIpExplicit) {
+    console.error('Error: --peer-ip requires --ip (set an explicit subnet)')
     process.exit(1)
   }
   const assigned = collectAssignedIpv4Addresses()
@@ -134,8 +113,12 @@ function applyClientAutoIp (flags) {
     process.exit(1)
   }
   flags.ip = picked.cidr
-  flags.peerIp = picked.peerAlias
-  console.log(`Auto IP: using ${flags.ip}, hub alias ${flags.peerIp}`)
+  if (isClient) {
+    flags.peerIp = picked.peerAlias
+    console.log(`Auto IP: using ${flags.ip}, hub alias ${flags.peerIp}`)
+  } else {
+    console.log(`Auto IP: using ${flags.ip}`)
+  }
 }
 
 /** Server: options first, then zero or more 64-hex peer public keys (firewall + incremental aliases). */
@@ -158,8 +141,6 @@ function parseServerArgs (args) {
       flags.fullTunnel = true
     } else if (a === '--out-interface' && args[i + 1]) {
       flags.outInterface = args[++i]
-    } else if (a === '--auto-ip') {
-      flags.autoIp = true
     } else if (a.startsWith('--')) {
       console.error(`Error: unknown server option: ${a}`)
       process.exit(1)
@@ -201,8 +182,6 @@ function parseSwarmFlags (args) {
       flags.mtu = validateMtu(args[++i])
     } else if (args[i] === '--ipv6' && args[i + 1]) {
       flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
-    } else if (args[i] === '--auto-ip') {
-      flags.autoIp = true
     } else if (args[i].startsWith('--')) {
       console.error(`Error: unknown swarm option: ${args[i]}`)
       process.exit(1)
@@ -222,8 +201,7 @@ Usage:
   nospoon genkey                          Generate a client seed + public key
 
 Server options (must come before any positional keys):
-  --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
-  --auto-ip             Pick first free 10.0.x.1/24 from local interface addresses (not with --ip or --config)
+  --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24 on this host; use --ip to fix 10.0.0.1/24 etc.)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::1/64)
   --seed <hex>          64-char hex seed for deterministic server key
   --config <path>       Path to peers.json (fixed IP per key; raw IPv4 wire). Not with positional keys.
@@ -235,17 +213,15 @@ Server options (must come before any positional keys):
                           aliases .2, .3, … in the --ip subnet (key-address on IPv4 wire). Omit for open mode.
 
 Client options:
-  --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
-  --auto-ip             Pick first free 10.0.x.1/24 and matching hub alias 10.0.x.2 (not with --ip or --peer-ip)
-  --peer-ip <addr>      Local alias for the peer’s key, same numbering as the other host (default: 10.0.0.2)
+  --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24 and matching hub alias 10.0.x.2; use --ip to fix)
+  --peer-ip <addr>      Local alias for the peer’s key (default: 10.0.x.2 with auto subnet; requires --ip if set)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::2/64)
   --seed <hex>          64-char hex client seed (for authenticated mode)
   --mtu <num>           MTU size (default: 1400)
   --full-tunnel         Route all internet traffic through the VPN
 
 Swarm options:
-  --ip <cidr>           TUN IPv4 (default: 10.0.0.1/24)
-  --auto-ip             Pick first free 10.0.x.1/24 (not with --ip)
+  --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24; use --ip to fix)
   --ipv6 <cidr>         TUN IPv6 (e.g. fd00::1/64)
   --seed <hex>          Deterministic swarm identity
   --mtu <num>           MTU (default: 1400)
@@ -300,7 +276,7 @@ async function main () {
       process.exit(1)
     }
     flags.allowedKeys = keys
-    applyServerAutoIp(flags)
+    applyIpv4AutoUnlessExplicit(flags, { isClient: false })
     await startServer(flags)
   } else if (command === 'client') {
     const key = args[1]
@@ -312,7 +288,7 @@ async function main () {
     validateHex64(key, 'public key')
     const flags = parseFlags(args.slice(2))
     flags.key = key
-    applyClientAutoIp(flags)
+    applyIpv4AutoUnlessExplicit(flags, { isClient: true })
     await startClient(flags)
   } else if (command === 'swarm') {
     const topic = args[1]
@@ -321,7 +297,7 @@ async function main () {
       process.exit(1)
     }
     const flags = parseSwarmFlags(args.slice(2))
-    applyServerAutoIp(flags)
+    applyIpv4AutoUnlessExplicit(flags, { isClient: false })
     await startSwarmMesh({ topic, ...flags })
   } else {
     console.error(`Unknown command: ${command}`)

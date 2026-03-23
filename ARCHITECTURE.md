@@ -14,8 +14,8 @@ using a DHT (Distributed Hash Table) for discovery and NAT hole-punching.
 Once connected, they exchange raw IP packets through a TUN device — a
 virtual network interface that the operating system treats like a real one.
 
-Hub/spoke example (defaults: `--ip 10.0.0.1/24`, client `--peer-ip 10.0.0.2`).
-Each side has its **own** `10.0.0.1/24` on `tun0` (this host in the VPN). The
+Hub/spoke example (illustrative fixed subnet: `--ip 10.0.0.1/24`, client hub alias `10.0.0.2`; without **`--ip`**, the CLI picks the first free **`10.0.x.1/24`** instead).
+Each side has its **own** `.1` in the chosen `/24` on `tun0` (this host in the VPN). The
 client reaches the hub at the **local alias** for the hub’s public key
 (default **10.0.0.2**), not at `10.0.0.1` (that is the client’s address on its
 TUN). IPv4 inside the tunnel uses **key-address** encoding on the wire.
@@ -72,36 +72,43 @@ global IP namespace.
 
 ### Topic mesh (`swarm`)
 
-**`nospoon swarm <topic>`** joins a **Hyperswarm** topic. The topic string
-is hashed with **SHA-256** (UTF-8) to a 32-byte topic buffer. **Possessing
-the topic string is the capability** to discover and dial peers on that
-overlay; each pairwise stream is still **Noise-encrypted**. There is no
-separate hub process: every participant runs the same mesh logic. **One
-topic per process**, **pairwise** IPv4 forwarding only (no application-level
-relay of tun frames through a third peer). Mappings from public key to
-local IPv4 alias are **ephemeral** for now (no persistence across restarts).
+**`nospoon swarm <topic>`** joins a **Hyperswarm** topic derived from the
+shared topic bytes. **Discovery key:** **`swarmDiscoveryKey`** in `swarm-topic.js`
+uses **hypercore-crypto**’s `hash` (BLAKE2b) over a **`nospoon`** domain label plus
+the topic bytes — a 32-byte value for **`swarm.join`**, so the **raw topic is not
+advertised on the DHT** as UTF-8. **Authentication:** after the **Noise** handshake,
+peers exchange a **hypercore-style capability** (keyed by the handshake hash, same
+pattern as replicate caps) proving possession of the **topic preimage**; mismatch
+destroys the connection. Each pairwise stream is still **Noise-encrypted** for
+payloads. There is no separate hub: every participant runs the same mesh logic.
+**One topic per process**, **pairwise** IPv4 forwarding only (no application-level
+relay of tun frames through a third peer). Mappings from public key to local IPv4
+alias are **ephemeral** for now (no persistence across restarts).
 
-### `--auto-ip` (server, client, swarm)
+### Default IPv4 (`server`, `client`, `swarm`)
 
-Optional: read addresses already assigned on local interfaces (`os.networkInterfaces`)
-and pick the first free **`10.0.n.1/24`** in `10.0.0.0/16`. For **client**,
-the hub alias defaults to **`10.0.n.2`** for the same `n`. Cannot be
-combined with `--ip`, or with `--config` / `--peer-ip` where applicable.
+Unless **`--ip`** is set, **`cli.js`** reads addresses on local interfaces
+(`collectAssignedIpv4Addresses`) and picks the first free **`10.0.n.1/24`** in
+`10.0.0.0/16`. For **client**, the hub alias is **`10.0.n.2`** for the same `n`.
+**Exception:** **`nospoon server --config …`** without **`--ip`** skips this scan
+and uses **`10.0.0.1/24`** so `peers.json` IPs in that subnet stay valid. **`--peer-ip`**
+without **`--ip`** is an error (explicit subnet required).
 
 
 ## File Map
 
 ```
 bin/
-  cli.js              CLI: server, client, swarm, genkey; validation; --auto-ip
+  cli.js              CLI: server, client, swarm, genkey; default IPv4 pick; validation
 
 lib/
   server.js           HyperDHT server, TUN, key-address, hub directory broadcast
   client.js           HyperDHT client, TUN, hub directory apply, auto-reconnect
-  swarm-mesh.js       Hyperswarm topic mesh: TUN, pairwise key-address, no hub
+  swarm-topic.js      Discovery key (BLAKE2b) + post-handshake topic capability
+  swarm-mesh.js       Hyperswarm topic mesh: TUN, pairwise key-address, topic auth
   key-address.js      IPv4/IPv6 key-address wire encode/decode; key ↔ alias maps
   hub-directory.js    In-band hub peer-list frames (JSON) for spoke discovery
-  ip-subnet.js        Subnet math, peer IP allocator, --auto-ip address scan
+  ip-subnet.js        Subnet math, peer IP allocator, free 10.0.x.1 scan
   framing.js          Length-prefix framing; keepalives
   routing.js          readSourceIp / readDestinationIp; router (key → connection)
   tun.js              Platform dispatcher (tun-linux or tun-darwin)
@@ -115,7 +122,8 @@ test/
   key-address.test.js   Key-address round-trip; unwrap null on stale peer
   hub-directory.test.js Directory frame magic + JSON round-trip
   ip-subnet.test.js     Auto 10.0.x.1 picking
-  swarm-mesh.test.js    Topic hash helper
+  swarm-mesh.test.js    swarmDiscoveryKey helper
+  swarm-topic.test.js   Topic capability role symmetry
 ```
 
 
@@ -127,7 +135,7 @@ test/
 sudo nospoon server --config peers.json
 ```
 
-1. `cli.js` parses arguments, optional `--auto-ip`, calls `startServer()`
+1. `cli.js` parses arguments, applies default IPv4 unless `--ip` / `--config` rules say otherwise, calls `startServer()`
 2. `startServer()` generates a key pair from a random seed (or `--seed`)
 3. Creates a TUN via `createTunDevice()` — assigns IP, sets MTU
 4. Creates a `router` and, in open or allowlist hub mode, a **key-address**
@@ -142,8 +150,8 @@ sudo nospoon server --config peers.json
 sudo nospoon client <server-public-key> --seed <client-seed>
 ```
 
-1. `cli.js` parses arguments, optional `--auto-ip`, calls `startClient()`
-2. Creates a TUN (e.g. `10.0.0.1/24` with hub at `--peer-ip`)
+1. `cli.js` parses arguments, applies default IPv4 unless `--ip` is set, calls `startClient()`
+2. Creates a TUN (e.g. first free `10.0.x.1/24` with hub at `10.0.x.2`, or explicit `--ip` / `--peer-ip`)
 3. Calls `dht.connect(serverPublicKey)` — NAT traversal, Noise stream
 4. The server's `firewall` runs (auth vs open)
 5. On `open`, client registers the hub key at the local alias IP, may apply
@@ -297,8 +305,8 @@ all hub connections when someone joins or leaves.
 ### client.js — The Client
 
 **Key-address:** On connect, builds a key-address table with local TUN IP and
-registers the **hub** at `--peer-ip` (default `10.0.0.2`). **`--auto-ip`**
-can pick a free `10.0.n.1/24` and matching hub alias `10.0.n.2`.
+registers the **hub** at `--peer-ip` (default **`10.0.n.2`** when the CLI picked
+**`10.0.n.1/24`**, or **`10.0.0.2`** when using explicit **`10.0.0.1/24`**).
 
 **Hub directory:** When a directory frame arrives, `applyHubDirectory`
 allocates unused aliases in the same subnet and registers other spokes' keys
@@ -327,21 +335,21 @@ in hub open mode for spoke discovery.
 
 **`parseSubnet`**, **`ipToInt`**, **`intToIp`**, **`createPeerIpAllocator`**
 (lowest free host in subnet, skipping the TUN host address by default), plus
-**`collectAssignedIpv4Addresses`** and **`pickFreeTenDotZeroSubnet`** for
-`--auto-ip`.
+**`collectAssignedIpv4Addresses`** and **`pickFreeTenDotZeroSubnet`** for the
+CLI default IPv4 path.
 
 ### swarm-mesh.js — Topic mesh
 
-**`topicKeyFromString(s)`** → SHA-256 digest. **`startSwarmMesh`** creates
-`Hyperswarm` (shared HyperDHT stack), **`await swarm.listen()`**,
-**`swarm.join(topicBuf)`**, **`await discovery.flushed()`**. Each
-**`connection`** event wires a Noise stream like the hub: allocate peer IP,
-`ka.register`, `router.addPeer`, length decoder, `unwrapTunnelPayload` /
-`wrapTunnelPayload`, TUN read/write. **Pairwise only.** Reuses an alias IP
-when the same peer reconnects. **`attachConnErrorHandler`** registers an
-`error` listener on each `NoiseSecretStream` so disconnect timeouts do not
-surface as unhandled exceptions. **`safeWrite`** avoids synchronous throws
-when forwarding to a closing peer.
+**`startSwarmMesh`** normalizes topic bytes, computes **`discoveryKey` =
+`swarmDiscoveryKey(topicSecret)`**, creates **`Hyperswarm`**, **`await swarm.listen()`**,
+**`swarm.join(discoveryKey)`**, **`await discovery.flushed()`**. Each **`connection`**
+awaits **`handshake`** (for **`handshakeHash`**), runs **topic capability** exchange
+on the first framed payload (initiator sends first), then **`router.addPeer`** and
+tunnel traffic. Peer IP allocation, **`ka.register`**, length decoder,
+**`unwrapTunnelPayload` / `wrapTunnelPayload`**, TUN read/write — **pairwise only**.
+Reuses an alias IP when the same peer reconnects. **`attachConnErrorHandler`**
+registers an `error` listener on each **`NoiseSecretStream`**. **`safeWrite`**
+avoids synchronous throws when forwarding to a closing peer.
 
 
 ## TUN Device — How It Works
@@ -626,10 +634,11 @@ streams.
   (same trust model as “I joined this hub”)
 
 ### Topic Mesh (`swarm`)
-- **Topic string** (hashed to 32 bytes) is the **capability** to discover and
-  dial peers on that Hyperswarm topic
-- Pairwise streams are still Noise-encrypted; **topic possession is the
-  membership policy** in the current design (no extra allowlist)
+- **Discovery:** 32-byte **discovery key** (BLAKE2b over domain + topic bytes) is
+  what Hyperswarm advertises; passive observers do not see the raw topic string
+- **Membership:** after Noise, peers prove possession of the **topic preimage** via
+  a keyed capability; wrong preimage drops the connection
+- Pairwise streams are still Noise-encrypted for tunnel payloads (no extra allowlist)
 
 ### Subnet Validation (`peers.json`)
 Peer IPs are validated against the server's CIDR (network/broadcast,
