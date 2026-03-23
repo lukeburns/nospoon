@@ -3,12 +3,14 @@ const assert = require('node:assert/strict')
 const {
   createKeyAddressTable,
   computeIpv4HeaderChecksum,
-  IPV4_HEADER_LEN
+  IPV4_HEADER_LEN,
+  IPV6_HEADER_LEN
 } = require('../lib/key-address')
 
 const PROTO_ICMP = 1
 const PROTO_TCP = 6
 const PROTO_UDP = 17
+const PROTO_ICMPV6 = 58
 
 const keyA = Buffer.alloc(32, 0x01)
 const keyB = Buffer.alloc(32, 0x02)
@@ -17,6 +19,52 @@ function fold16 (sum) {
   let s = sum
   while (s >> 16) s = (s & 0xffff) + (s >> 16)
   return (~s) & 0xffff
+}
+
+/** fd00::1 / fd00::2 as 16-byte buffers */
+const fd00_1 = Buffer.from('fd000000000000000000000000000001', 'hex')
+const fd00_2 = Buffer.from('fd000000000000000000000000000002', 'hex')
+
+function ipv6Packet ({ src, dst, nextHeader, payload }) {
+  if (payload.length > 65535) throw new Error('payload too long')
+  const h = Buffer.allocUnsafe(IPV6_HEADER_LEN)
+  h.writeUInt32BE(0x60000000, 0)
+  h.writeUInt16BE(payload.length, 4)
+  h[6] = nextHeader
+  h[7] = 64
+  src.copy(h, 8)
+  dst.copy(h, 24)
+  return Buffer.concat([h, payload])
+}
+
+function udp6Payload ({ sport, dport, data, srcIp, dstIp }) {
+  const udpLen = 8 + data.length
+  const u = Buffer.allocUnsafe(udpLen)
+  u.writeUInt16BE(sport, 0)
+  u.writeUInt16BE(dport, 2)
+  u.writeUInt16BE(udpLen, 4)
+  u.writeUInt16BE(0, 6)
+  data.copy(u, 8)
+  const ph = Buffer.alloc(40)
+  srcIp.copy(ph, 0)
+  dstIp.copy(ph, 16)
+  ph.writeUInt32BE(udpLen, 32)
+  ph[36] = 0
+  ph[37] = 0
+  ph[38] = 0
+  ph[39] = PROTO_UDP
+  let sum = 0
+  for (let i = 0; i < 40; i += 2) sum += ph.readUInt16BE(i)
+  let i = 0
+  while (i + 1 < udpLen) {
+    sum += u.readUInt16BE(i)
+    i += 2
+  }
+  if (i < udpLen) sum += u[i] << 8
+  let c = fold16(sum)
+  if (c === 0) c = 0xffff
+  u.writeUInt16BE(c, 6)
+  return u
 }
 
 function ipv4Packet ({ src, dst, proto, payload }) {
@@ -155,6 +203,87 @@ describe('key-address', function () {
     }, /No key registered/)
   })
 
+  it('round-trips IPv6 + UDP with keys and valid checksums', function () {
+    const udp = udp6Payload({
+      sport: 52000,
+      dport: 53000,
+      data: Buffer.from('v6'),
+      srcIp: fd00_1,
+      dstIp: fd00_2
+    })
+    const packet = ipv6Packet({
+      src: fd00_1,
+      dst: fd00_2,
+      nextHeader: PROTO_UDP,
+      payload: udp
+    })
+
+    const table = createKeyAddressTable({
+      localIp: 'fd00::1',
+      localKey: keyA
+    })
+    table.register('fd00::2', keyB)
+
+    const back = table.decode(table.encode(packet))
+    assert.deepEqual(back, packet)
+  })
+
+  it('round-trips IPv6 TCP and ICMPv6 echo', function () {
+    const tcp = Buffer.alloc(20)
+    tcp.writeUInt16BE(44000, 0)
+    tcp.writeUInt16BE(80, 2)
+    tcp.writeUInt32BE(2, 4)
+    tcp.writeUInt32BE(0, 8)
+    tcp.writeUInt16BE(0x5000, 12)
+    tcp.writeUInt16BE(0, 16)
+    tcp.writeUInt16BE(0, 18)
+
+    const ph = Buffer.alloc(40)
+    fd00_1.copy(ph, 0)
+    fd00_2.copy(ph, 16)
+    ph.writeUInt32BE(20, 32)
+    ph[39] = PROTO_TCP
+    let sum = 0
+    for (let i = 0; i < 40; i += 2) sum += ph.readUInt16BE(i)
+    for (let i = 0; i < 20; i += 2) sum += tcp.readUInt16BE(i)
+    tcp.writeUInt16BE(fold16(sum), 16)
+
+    const pktTcp = ipv6Packet({
+      src: fd00_1,
+      dst: fd00_2,
+      nextHeader: PROTO_TCP,
+      payload: tcp
+    })
+
+    const table = createKeyAddressTable({ localIp: 'fd00::1', localKey: keyA })
+    table.register('fd00::2', keyB)
+    assert.deepEqual(table.decode(table.encode(pktTcp)), pktTcp)
+
+    const icmp6 = Buffer.alloc(8)
+    icmp6[0] = 128
+    icmp6[1] = 0
+    icmp6.writeUInt16BE(0, 2)
+    icmp6.writeUInt16BE(1, 4)
+    icmp6.writeUInt16BE(0, 6)
+    const phI = Buffer.alloc(40)
+    fd00_1.copy(phI, 0)
+    fd00_2.copy(phI, 16)
+    phI.writeUInt32BE(8, 32)
+    phI[39] = PROTO_ICMPV6
+    sum = 0
+    for (let i = 0; i < 40; i += 2) sum += phI.readUInt16BE(i)
+    for (let i = 0; i < 8; i += 2) sum += icmp6.readUInt16BE(i)
+    icmp6.writeUInt16BE(fold16(sum), 2)
+
+    const pktIcmp = ipv6Packet({
+      src: fd00_1,
+      dst: fd00_2,
+      nextHeader: PROTO_ICMPV6,
+      payload: icmp6
+    })
+    assert.deepEqual(table.decode(table.encode(pktIcmp)), pktIcmp)
+  })
+
   it('allows multiple IPs for the same key (contextual aliases)', function () {
     const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
     table.register('10.0.0.2', keyB)
@@ -163,5 +292,17 @@ describe('key-address', function () {
     assert.deepEqual(table.ipToKey(Buffer.from([10, 0, 0, 3])), keyB)
     // decode uses first registered alias for that key
     assert.equal(table.keyToIp(keyB).join('.'), '10.0.0.2')
+  })
+
+  it('unregister removes peer mapping so the same IP can be reused', function () {
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    table.register('10.0.0.2', keyB)
+    table.unregister('10.0.0.2')
+    table.register('10.0.0.2', keyB)
+    const src = Buffer.from([10, 0, 0, 1])
+    const dst = Buffer.from([10, 0, 0, 2])
+    const udp = udpPayload({ sport: 1, dport: 2, data: Buffer.alloc(0) })
+    const packet = ipv4Packet({ src, dst, proto: PROTO_UDP, payload: udp })
+    assert.doesNotThrow(function () { table.encode(packet) })
   })
 })

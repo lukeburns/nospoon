@@ -18,6 +18,14 @@ function validateHex64 (value, label) {
   return value
 }
 
+function validatePeerIpv4 (value, label) {
+  if (!net.isIPv4(value)) {
+    console.error(`Error: ${label} must be a valid IPv4 host address (e.g. 10.0.0.1)`)
+    process.exit(1)
+  }
+  return value
+}
+
 function validateCidr (value, label) {
   if (!CIDR_V4_RE.test(value)) {
     console.error(`Error: ${label} must be in CIDR format (e.g. 10.0.0.1/24)`)
@@ -69,6 +77,8 @@ function parseFlags (args) {
       flags.config = args[++i]
     } else if (args[i] === '--ipv6' && args[i + 1]) {
       flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
+    } else if (args[i] === '--peer-ip' && args[i + 1]) {
+      flags.peerIp = validatePeerIpv4(args[++i], '--peer-ip')
     } else if (args[i] === '--full-tunnel') {
       flags.fullTunnel = true
     } else if (args[i] === '--out-interface' && args[i + 1]) {
@@ -97,7 +107,8 @@ Server options:
   --out-interface <if>  Outgoing interface for NAT (default: auto-detect)
 
 Client options:
-  --ip <cidr>           TUN IPv4 address (default: 10.0.0.2/24)
+  --ip <cidr>           TUN IPv4 address (default: 10.0.0.1/24)
+  --peer-ip <addr>      Local alias for the peer’s key, same numbering as the other host (default: 10.0.0.2)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::2/64)
   --seed <hex>          64-char hex client seed (for authenticated mode)
   --mtu <num>           MTU size (default: 1400)
@@ -113,7 +124,7 @@ Examples:
   sudo nospoon server --full-tunnel --config peers.json
   sudo nospoon client <server-key> --seed <seed> --full-tunnel
 
-  # Open mode (testing only — no IP assignment, no authentication)
+  # Open mode (testing only — no peer authentication; server assigns aliases .2, .3, …)
   sudo nospoon server
   sudo nospoon client <public-key>
 
