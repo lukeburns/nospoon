@@ -32,19 +32,19 @@ nospoon genkey
 # Save seed and public key
 ```
 
-`peers.json` on the **hub** (recommended):
+`peers.json` on the **hub** (recommended). Map keys are **z32**-encoded public keys (64 hex characters still work):
 
 ```json
 {
   "peers": {
-    "<client-public-key>": "10.0.0.2"
+    "<client-public-key-z32>": "10.0.0.2"
   }
 }
 ```
 
 ```bash
 sudo nospoon server --config peers.json
-sudo nospoon client <server-public-key> --seed <client-seed>
+sudo nospoon client <server-public-key-z32> --seed <client-seed-z32>
 ```
 
 **Addresses:** unless you set **`--ip`**, nospoon picks the first free **`10.0.x.1/24`** on the host (from existing interface addresses) and logs it; **`nospoon server --config …`** without **`--ip`** keeps **`10.0.0.1/24`** so `peers.json` stays aligned. Each side’s TUN is **`.1`** in its chosen `/24`. The client maps the hub at **`--peer-ip`** (with auto subnet, **`10.0.x.2`** for the same `x`). From the client, reach the hub at that alias, not at **`.1`** (that is the client’s own TUN address).
@@ -86,7 +86,7 @@ Ephemeral IP assignment in the chosen subnet (default: first free **`10.0.x.1/24
 |------|---------|-------------|
 | `--ip <cidr>` | first free `10.0.x.1/24`* | Hub TUN IPv4; set explicitly to fix e.g. `10.0.0.1/24` |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
-| `--seed <hex>` | random | Deterministic hub key |
+| `--seed` (z32 or hex) | random | Deterministic hub key |
 | `--config <path>` | none | `peers.json` fixed IPs |
 | `--mtu <num>` | `1400` | TUN MTU |
 | `--full-tunnel` | off | NAT for client internet access |
@@ -103,7 +103,7 @@ Positional **`peer-key`** values: allowlist-only firewall (same incremental alia
 | `--ip <cidr>` | first free `10.0.x.1/24` | This host’s TUN address; set explicitly to fix e.g. `10.0.0.1/24` |
 | `--peer-ip <addr>` | `10.0.x.2` with auto subnet | Local alias for the **hub’s** public key; if you set **`--peer-ip`**, you must also set **`--ip`** |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
-| `--seed <hex>` | none | Client identity (`--config` / allowlist on server) |
+| `--seed` (z32 or hex) | none | Client identity (`--config` / allowlist on server) |
 | `--mtu <num>` | `1400` | TUN MTU |
 | `--full-tunnel` | off | Route all traffic through VPN |
 
@@ -113,12 +113,12 @@ Positional **`peer-key`** values: allowlist-only firewall (same incremental alia
 |------|---------|-------------|
 | `--ip <cidr>` | first free `10.0.x.1/24` | This peer’s TUN; set explicitly to fix e.g. `10.0.0.1/24` |
 | `--ipv6 <cidr>` | none | TUN IPv6 |
-| `--seed <hex>` | random | Deterministic peer key |
+| `--seed` (z32 or hex) | random | Deterministic peer key |
 | `--mtu <num>` | `1400` | TUN MTU |
 
 ### `nospoon genkey`
 
-Print a random seed and public key. No root.
+Print a random seed and public key (**z32**). No root. Legacy **64 hex** strings are still accepted anywhere a key or seed is parsed.
 
 ## How it works (short)
 

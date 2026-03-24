@@ -5,19 +5,20 @@ const { startServer } = require('../lib/server')
 const { startClient } = require('../lib/client')
 const { startSwarmMesh } = require('../lib/swarm-mesh')
 const { collectAssignedIpv4Addresses, pickFreeTenDotZeroSubnet } = require('../lib/ip-subnet')
+const { parse32Bytes, toHex32, encodeZ32 } = require('../lib/key-encoding')
 
 const args = process.argv.slice(2)
 const command = args[0]
 
-const HEX_RE = /^[0-9a-fA-F]{64}$/
 const CIDR_V4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/
 
-function validateHex64 (value, label) {
-  if (!HEX_RE.test(value)) {
-    console.error(`Error: ${label} must be exactly 64 hex characters`)
-    process.exit(1)
-  }
-  return value
+/** Normalize to lowercase hex for internal use (server/client libs). */
+function parsePublicKeyArg (value, label) {
+  return toHex32(parse32Bytes(value, label)).toLowerCase()
+}
+
+function parseSeedArg (value, label) {
+  return toHex32(parse32Bytes(value, label))
 }
 
 function validatePeerIpv4 (value, label) {
@@ -72,7 +73,12 @@ function parseFlags (args) {
     if (args[i] === '--ip' && args[i + 1]) {
       flags.ip = validateCidr(args[++i], '--ip')
     } else if (args[i] === '--seed' && args[i + 1]) {
-      flags.seed = validateHex64(args[++i], '--seed')
+      try {
+        flags.seed = parseSeedArg(args[++i], '--seed')
+      } catch (e) {
+        console.error('Error:', e.message)
+        process.exit(1)
+      }
     } else if (args[i] === '--mtu' && args[i + 1]) {
       flags.mtu = validateMtu(args[++i])
     } else if (args[i] === '--config' && args[i + 1]) {
@@ -121,7 +127,7 @@ function applyIpv4AutoUnlessExplicit (flags, opts) {
   }
 }
 
-/** Server: options first, then zero or more 64-hex peer public keys (firewall + incremental aliases). */
+/** Server: options first, then zero or more peer public keys (firewall + incremental aliases). */
 function parseServerArgs (args) {
   const flags = {}
   let i = 0
@@ -130,7 +136,12 @@ function parseServerArgs (args) {
     if (a === '--ip' && args[i + 1]) {
       flags.ip = validateCidr(args[++i], '--ip')
     } else if (a === '--seed' && args[i + 1]) {
-      flags.seed = validateHex64(args[++i], '--seed')
+      try {
+        flags.seed = parseSeedArg(args[++i], '--seed')
+      } catch (e) {
+        console.error('Error:', e.message)
+        process.exit(1)
+      }
     } else if (a === '--mtu' && args[i + 1]) {
       flags.mtu = validateMtu(args[++i])
     } else if (a === '--config' && args[i + 1]) {
@@ -157,9 +168,15 @@ function parseServerArgs (args) {
       console.error('Error: server options must come before peer public keys')
       process.exit(1)
     }
-    const k = validateHex64(args[i], `peer key ${keys.length + 1}`).toLowerCase()
+    let k
+    try {
+      k = parsePublicKeyArg(args[i], `peer key ${keys.length + 1}`)
+    } catch (e) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
     if (seen.has(k)) {
-      console.warn(`Warning: duplicate peer key ignored (${k.slice(0, 8)}...)`)
+      console.warn(`Warning: duplicate peer key ignored (${encodeZ32(Buffer.from(k, 'hex')).slice(0, 8)}…)`)
     } else {
       seen.add(k)
       keys.push(k)
@@ -177,7 +194,12 @@ function parseSwarmFlags (args) {
     if (args[i] === '--ip' && args[i + 1]) {
       flags.ip = validateCidr(args[++i], '--ip')
     } else if (args[i] === '--seed' && args[i + 1]) {
-      flags.seed = validateHex64(args[++i], '--seed')
+      try {
+        flags.seed = parseSeedArg(args[++i], '--seed')
+      } catch (e) {
+        console.error('Error:', e.message)
+        process.exit(1)
+      }
     } else if (args[i] === '--mtu' && args[i + 1]) {
       flags.mtu = validateMtu(args[++i])
     } else if (args[i] === '--ipv6' && args[i + 1]) {
@@ -200,10 +222,12 @@ Usage:
   nospoon swarm <topic> [options]        Hyperswarm topic mesh (pairwise; topic = capability)
   nospoon genkey                          Generate a client seed + public key
 
+Keys and seeds use z32 encoding (32-byte values). 64-character hex is still accepted.
+
 Server options (must come before any positional keys):
   --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24 on this host; use --ip to fix 10.0.0.1/24 etc.)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::1/64)
-  --seed <hex>          64-char hex seed for deterministic server key
+  --seed <z32|hex>      Seed for deterministic server key
   --config <path>       Path to peers.json (fixed IP per key; raw IPv4 wire). Not with positional keys.
   --mtu <num>           MTU size (default: 1400)
   --full-tunnel         Enable NAT so clients can access the internet
@@ -216,34 +240,34 @@ Client options:
   --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24 and matching hub alias 10.0.x.2; use --ip to fix)
   --peer-ip <addr>      Local alias for the peer’s key (default: 10.0.x.2 with auto subnet; requires --ip if set)
   --ipv6 <cidr>         TUN IPv6 address (e.g. fd00::2/64)
-  --seed <hex>          64-char hex client seed (for authenticated mode)
+  --seed <z32|hex>      Client seed (for authenticated mode)
   --mtu <num>           MTU size (default: 1400)
   --full-tunnel         Route all internet traffic through the VPN
 
 Swarm options:
   --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24; use --ip to fix)
   --ipv6 <cidr>         TUN IPv6 (e.g. fd00::1/64)
-  --seed <hex>          Deterministic swarm identity
+  --seed <z32|hex>      Deterministic swarm identity
   --mtu <num>           MTU (default: 1400)
 
 Examples:
   # Authenticated mode (recommended)
-  nospoon genkey                        # generate client identity
+  nospoon genkey                        # generate client identity (z32)
   sudo nospoon server --config peers.json
-  sudo nospoon client <server-key> --seed <client-seed>
+  sudo nospoon client <server-z32> --seed <client-seed-z32>
 
   # Full tunnel (use as internet VPN)
   sudo nospoon server --full-tunnel --config peers.json
-  sudo nospoon client <server-key> --seed <seed> --full-tunnel
+  sudo nospoon client <server-z32> --seed <seed-z32> --full-tunnel
 
   # Allowlist hub (only these client keys; incremental aliases like open mode)
-  sudo nospoon server <client-a-pubkey-hex> <client-b-pubkey-hex>
+  sudo nospoon server <client-a-z32> <client-b-z32>
 
   # Open mode (any client; server assigns aliases .2, .3, …)
   sudo nospoon server
-  sudo nospoon client <public-key>
+  sudo nospoon client <hub-public-key-z32>
 
-peers.json format:
+peers.json format (keys may be z32 or 64 hex):
   {
     "peers": {
       "<client-public-key>": "10.0.0.2",
@@ -264,8 +288,8 @@ async function main () {
     const HyperDHT = require('hyperdht')
     const seed = crypto.randomBytes(32)
     const keyPair = HyperDHT.keyPair(seed)
-    console.log('Seed (keep secret):  ', seed.toString('hex'))
-    console.log('Public key (share):  ', keyPair.publicKey.toString('hex'))
+    console.log('Seed (keep secret):  ', encodeZ32(seed))
+    console.log('Public key (share):  ', encodeZ32(keyPair.publicKey))
     process.exit(0)
   }
 
@@ -282,12 +306,18 @@ async function main () {
     const key = args[1]
     if (!key) {
       console.error('Error: server public key required')
-      console.error('Usage: nospoon client <server-public-key-hex>')
+      console.error('Usage: nospoon client <server-public-key>')
       process.exit(1)
     }
-    validateHex64(key, 'public key')
+    let keyHex
+    try {
+      keyHex = parsePublicKeyArg(key, 'public key')
+    } catch (e) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
     const flags = parseFlags(args.slice(2))
-    flags.key = key
+    flags.key = keyHex
     applyIpv4AutoUnlessExplicit(flags, { isClient: true })
     await startClient(flags)
   } else if (command === 'swarm') {

@@ -32,6 +32,7 @@
     "lib/framing.js",
     "lib/hub-directory.js",
     "lib/ip-subnet.js",
+    "lib/key-encoding.js",
     "lib/key-address.js",
     "lib/full-tunnel.js",
     "lib/full-tunnel-linux.js",
@@ -51,6 +52,7 @@
     "hypercore-crypto": "^3.6.1",
     "hyperdht": "^6.29.1",
     "hyperswarm": "^4.17.0",
-    "koffi": "^2.15.2"
+    "koffi": "^2.15.2",
+    "z32": "^1.1.0"
   }
 }
