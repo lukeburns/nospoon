@@ -2,7 +2,12 @@
   "name": "nospoon",
   "version": "0.2.0",
   "description": "P2P VPN over HyperDHT - WireGuard-like interface using Hyperswarm",
-  "main": "lib/server.js",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./lib/*": "./lib/*.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "nospoon": "bin/cli.js"
   },
@@ -22,6 +27,7 @@
   "license": "GPL-3.0-only",
   "files": [
     "bin/",
+    "lib/index.js",
     "lib/client.js",
     "lib/framing.js",
     "lib/hub-directory.js",
