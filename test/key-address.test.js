@@ -318,4 +318,36 @@ describe('key-address', function () {
     const packet = ipv4Packet({ src, dst, proto: PROTO_UDP, payload: udp })
     assert.doesNotThrow(function () { table.encode(packet) })
   })
+
+  it('localMeshId registers topic-scoped identity for local TUN address', function () {
+    const bHex = keyB.toString('hex')
+    const localMesh = { kind: 'keyTopic', keyHex: keyA.toString('hex'), topicId: 'tid-1' }
+    const table = createKeyAddressTable({
+      localIp: '10.0.0.1',
+      localKey: keyA,
+      localMeshId: localMesh
+    })
+    assert.deepEqual(table.meshIdentifierForIp('10.0.0.1'), {
+      kind: 'keyTopic',
+      keyHex: keyA.toString('hex'),
+      topicId: 'tid-1'
+    })
+    table.register('10.0.0.2', keyB, { kind: 'keyTopic', keyHex: bHex, topicId: 'tid-1' })
+    assert.equal(table.ipForMeshIdentifier({ kind: 'keyTopic', keyHex: bHex, topicId: 'tid-1' }), '10.0.0.2')
+  })
+
+  it('meshIdentifierForIp / ipForMeshIdentifier optional mesh metadata', function () {
+    const bHex = keyB.toString('hex')
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    const meshKey = { kind: 'key', keyHex: bHex }
+    const meshTopic = { kind: 'keyTopic', keyHex: bHex, topicId: 'topic-uuid' }
+    table.register('10.0.0.2', keyB, meshKey)
+    table.register('10.0.0.3', keyB, meshTopic)
+    assert.deepEqual(table.meshIdentifierForIp('10.0.0.2'), { kind: 'key', keyHex: bHex })
+    assert.deepEqual(table.meshIdentifierForIp('10.0.0.3'), { kind: 'keyTopic', keyHex: bHex, topicId: 'topic-uuid' })
+    assert.equal(table.ipForMeshIdentifier(meshKey), '10.0.0.2')
+    assert.equal(table.ipForMeshIdentifier(meshTopic), '10.0.0.3')
+    table.unregister('10.0.0.2')
+    assert.equal(table.ipForMeshIdentifier(meshKey), null)
+  })
 })
