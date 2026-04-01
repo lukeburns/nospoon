@@ -67,6 +67,26 @@ function validateMtu (value) {
   return mtu
 }
 
+function parseWebFlags (args) {
+  const flags = { port: 8790, host: '127.0.0.1' }
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i + 1]) {
+      const p = parseInt(args[++i], 10)
+      if (isNaN(p) || p < 1 || p > 65535) {
+        console.error('Error: --port must be 1-65535')
+        process.exit(1)
+      }
+      flags.port = p
+    } else if (args[i] === '--host' && args[i + 1]) {
+      flags.host = args[++i]
+    } else if (args[i].startsWith('--')) {
+      console.error(`Error: unknown web option: ${args[i]}`)
+      process.exit(1)
+    }
+  }
+  return flags
+}
+
 function parseFlags (args) {
   const flags = {}
   for (let i = 0; i < args.length; i++) {
@@ -220,6 +240,7 @@ Usage:
   nospoon server [options] [<key> ...]   Start a VPN server (optional peer key allowlist)
   nospoon client <key> [options]          Connect to a VPN server
   nospoon swarm <topic> [options]        Hyperswarm topic mesh (pairwise; topic = capability)
+  nospoon web [options]                  HTTP control: join/leave topics & direct peers (TUN per session)
   nospoon genkey                          Generate a client seed + public key
 
 Keys and seeds use z32 encoding (32-byte values). 64-character hex is still accepted.
@@ -249,6 +270,12 @@ Swarm options:
   --ipv6 <cidr>         TUN IPv6 (e.g. fd00::1/64)
   --seed <z32|hex>      Deterministic swarm identity
   --mtu <num>           MTU (default: 1400)
+
+Web control (sudo for TUN when joining topics or peers):
+  --port <num>          HTTP port (default: 8790)
+  --host <addr>         Bind address (default: 127.0.0.1)
+
+  From the repo, \`npm run dev -- --port <n>\` runs this server on <n> and Vite (hot reload) on <n+1>.
 
 Examples:
   # Authenticated mode (recommended)
@@ -281,6 +308,38 @@ async function main () {
   if (!command || command === '--help' || command === '-h') {
     printUsage()
     process.exit(0)
+  }
+
+  if (command === 'web' || command === 'control') {
+    const { startControlHttpServer } = require('../lib/control-http')
+    const flags = parseWebFlags(args.slice(1))
+    const { sessions, port, closeHttpServer } = await startControlHttpServer(flags)
+    const host = flags.host
+    const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host
+    console.log('')
+    console.log('nospoon control plane (HTTP)')
+    console.log(`  http://${displayHost}:${port}/`)
+    if (host === '0.0.0.0') {
+      console.log('  (listening on all interfaces)')
+    }
+    console.log('  Hot reload (repo): npm run dev -- --port ' + port + '  →  Vite on ' + (port + 1) + ' (or npm run dev:web for Vite alone)')
+    console.log('')
+    let exiting = false
+    function shutdown () {
+      if (exiting) return
+      exiting = true
+      console.log('\nShutting down...')
+      sessions.destroy().then(function () {
+        return closeHttpServer()
+      }).then(function () {
+        process.exit(0)
+      }).catch(function () {
+        process.exit(1)
+      })
+    }
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
+    return
   }
 
   if (command === 'genkey') {

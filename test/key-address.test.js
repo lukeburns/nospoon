@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const {
   createKeyAddressTable,
   computeIpv4HeaderChecksum,
+  endpointPublicId,
   IPV4_HEADER_LEN,
   IPV6_HEADER_LEN,
   unwrapTunnelPayload
@@ -114,6 +115,15 @@ function udpPayload ({ sport, dport, data = Buffer.alloc(0) }) {
 }
 
 describe('key-address', function () {
+  it('endpointPublicId scopes the same Ed25519 key by topic preimage', function () {
+    const pk = Buffer.alloc(32, 7)
+    const a = endpointPublicId(pk, Buffer.from('topic-a', 'utf8'))
+    const b = endpointPublicId(pk, Buffer.from('topic-b', 'utf8'))
+    const direct = endpointPublicId(pk, Buffer.alloc(0))
+    assert.notDeepEqual(a, b)
+    assert.notDeepEqual(a, direct)
+  })
+
   it('round-trips IPv4 + UDP with keys and valid checksums', function () {
     const src = Buffer.from([10, 0, 0, 1])
     const dst = Buffer.from([10, 0, 0, 2])

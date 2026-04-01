@@ -14,7 +14,10 @@
   "scripts": {
     "server": "node bin/cli.js server",
     "client": "node bin/cli.js client",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify",
+    "dev": "node scripts/dev-web.mjs",
+    "dev:web": "vite --config web/vite.config.mjs"
   },
   "keywords": [
     "p2p",
@@ -29,6 +32,8 @@
     "bin/",
     "lib/index.js",
     "lib/client.js",
+    "lib/dht-connect.js",
+    "lib/direct-pool.js",
     "lib/framing.js",
     "lib/hub-directory.js",
     "lib/ip-subnet.js",
@@ -37,8 +42,13 @@
     "lib/full-tunnel.js",
     "lib/full-tunnel-linux.js",
     "lib/full-tunnel-darwin.js",
+    "lib/routing-policy.js",
     "lib/routing.js",
     "lib/server.js",
+    "lib/mesh-identifier.js",
+    "lib/control-http.js",
+    "lib/web.bundle.js",
+    "lib/web.bundle.css",
     "lib/swarm-mesh.js",
     "lib/swarm-topic.js",
     "lib/tun.js",
@@ -53,6 +63,13 @@
     "hyperdht": "^6.29.1",
     "hyperswarm": "^4.17.0",
     "koffi": "^2.15.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "z32": "^1.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.25.12",
+    "vite": "^6.0.0"
   }
 }
