@@ -275,7 +275,8 @@ Web control (sudo for TUN when joining topics or peers):
   --port <num>          HTTP port (default: 8790)
   --host <addr>         Bind address (default: 127.0.0.1)
 
-  From the repo, \`npm run dev -- --port <n>\` runs this server on <n> and Vite (hot reload) on <n+1>.
+  From the repo, \`npm run dev -- --port <n> [--host <addr>]\` runs this server on <n> (and Vite on <n+1>).
+  Use \`--host\` or \`--address\` for the bind address (default 127.0.0.1).
 
 Examples:
   # Authenticated mode (recommended)

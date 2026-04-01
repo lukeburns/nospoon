@@ -6,6 +6,9 @@
  * Starts Vite only after the control port accepts connections (avoids ECONNREFUSED races).
  * Use sudo if utun/TUN creation requires it.
  *
+ * Flags: --port / -p, --host / --address (bind for both nospoon web and Vite; default 127.0.0.1).
+ * For --host 0.0.0.0 the proxy and readiness probe use 127.0.0.1 (same machine).
+ *
  * Same TCP port for both is not practical with two separate processes; serving HMR from the
  * control server would require Vite middleware mode inside Node (possible, larger refactor).
  */
@@ -18,8 +21,16 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const cli = join(root, 'bin', 'cli.js')
 const viteBin = join(root, 'node_modules', 'vite', 'bin', 'vite.js')
 
-function parsePort (argv) {
+/** Hostname to open in browser / proxy target when control binds all interfaces. */
+function connectHost (bindHost) {
+  const h = String(bindHost || '').trim()
+  if (h === '0.0.0.0' || h === '::') return '127.0.0.1'
+  return h
+}
+
+function parseDevArgs (argv) {
   let port = 8790
+  let host = '127.0.0.1'
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--port' || a === '-p') {
@@ -36,20 +47,36 @@ function parsePort (argv) {
         process.exit(1)
       }
       port = v
+    } else if (a === '--host' || a === '--address') {
+      const v = argv[++i]
+      if (v == null || v === '' || v.startsWith('-')) {
+        console.error('dev: --host / --address requires a value')
+        process.exit(1)
+      }
+      host = v
+    } else if (a.startsWith('--host=')) {
+      host = a.slice('--host='.length)
+    } else if (a.startsWith('--address=')) {
+      host = a.slice('--address='.length)
     }
+  }
+  host = String(host).trim()
+  if (!host) {
+    console.error('dev: empty --host / --address')
+    process.exit(1)
   }
   if (port >= 65535) {
     console.error('dev: --port must be at most 65534 (need port+1 for Vite)')
     process.exit(1)
   }
-  return port
+  return { port, host }
 }
 
-function waitForListen (port, host = '127.0.0.1', timeoutMs = 60000) {
+function waitForListen (port, probeHost, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs
   return new Promise((resolve, reject) => {
     function attempt () {
-      const s = net.connect({ port, host }, () => {
+      const s = net.connect({ port, host: probeHost }, () => {
         s.end()
         resolve()
       })
@@ -58,7 +85,7 @@ function waitForListen (port, host = '127.0.0.1', timeoutMs = 60000) {
         if (Date.now() >= deadline) {
           reject(
             new Error(
-              `dev: timed out waiting for ${host}:${port} (did nospoon web fail to bind?)`
+              `dev: timed out waiting for ${probeHost}:${port} (did nospoon web fail to bind?)`
             )
           )
         } else {
@@ -70,11 +97,14 @@ function waitForListen (port, host = '127.0.0.1', timeoutMs = 60000) {
   })
 }
 
-const port = parsePort(process.argv)
+const { port, host } = parseDevArgs(process.argv)
 const vitePort = port + 1
+const probeHost = connectHost(host)
+const displayUrlHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
 
-process.env.NOSPOON_WEB_PROXY_TARGET = `http://127.0.0.1:${port}`
+process.env.NOSPOON_WEB_PROXY_TARGET = `http://${probeHost}:${port}`
 process.env.NOSPOON_WEB_VITE_PORT = String(vitePort)
+process.env.NOSPOON_WEB_VITE_HOST = host
 
 const children = []
 
@@ -96,12 +126,15 @@ process.on('SIGTERM', () => {
 })
 
 console.log('')
-console.log(`nospoon web (API + bundled UI)  http://127.0.0.1:${port}/`)
-console.log(`Vite (hot reload)               http://127.0.0.1:${vitePort}/`)
+console.log(`nospoon web (API + bundled UI)  http://${displayUrlHost}:${port}/`)
+if (host === '0.0.0.0' || host === '::') {
+  console.log('  (listening on all interfaces; use the URL above from this machine)')
+}
+console.log(`Vite (hot reload)               http://${displayUrlHost}:${vitePort}/`)
 console.log('  (use sudo if TUN creation fails; HTTP is up before primary interface finishes starting)')
 console.log('')
 
-const nospoon = spawn(process.execPath, [cli, 'web', '--host', '127.0.0.1', '--port', String(port)], {
+const nospoon = spawn(process.execPath, [cli, 'web', '--host', host, '--port', String(port)], {
   cwd: root,
   stdio: 'inherit',
   env: process.env
@@ -132,7 +165,7 @@ function onEarlyNospoonExit (code, signal) {
 nospoon.once('exit', onEarlyNospoonExit)
 
 try {
-  await Promise.race([waitForListen(port), nospoonExitBeforeListen])
+  await Promise.race([waitForListen(port, probeHost), nospoonExitBeforeListen])
 } catch (e) {
   console.error(e.message || e)
   shutdown()
