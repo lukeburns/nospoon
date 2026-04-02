@@ -286,6 +286,28 @@ describe('key-address', function () {
     assert.deepEqual(out.subarray(16, 20), dst)
   })
 
+  it('coerceIpv4SourceForMeshEncode does not throw on runt TCP (short L4)', function () {
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    table.register('10.0.0.2', keyB)
+    const b = Buffer.alloc(27)
+    b[0] = 0x45
+    b.writeUInt16BE(27, 2)
+    b[8] = 64
+    b[9] = PROTO_TCP
+    b[12] = 192
+    b[13] = 168
+    b[14] = 1
+    b[15] = 1
+    b[16] = 10
+    b[17] = 0
+    b[18] = 0
+    b[19] = 2
+    b.writeUInt16BE(computeIpv4HeaderChecksum(b.subarray(0, 20)), 10)
+    assert.doesNotThrow(function () {
+      coerceIpv4SourceForMeshEncode(b, table, '10.0.0.1')
+    })
+  })
+
   it('coerceIpv4SourceForMeshEncode rewrites RFC1918 src when not in ka', function () {
     const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
     table.register('10.0.0.2', keyB)
