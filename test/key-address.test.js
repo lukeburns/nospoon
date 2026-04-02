@@ -5,8 +5,12 @@ const {
   computeIpv4HeaderChecksum,
   endpointPublicId,
   IPV4_HEADER_LEN,
+  IPV4_PREFIX_LEN,
+  IPV4_WIRE_FLAG_DST_KEYED,
+  IPV4_WIRE_FLAG_SRC_KEYED,
   IPV6_HEADER_LEN,
-  unwrapTunnelPayload
+  unwrapTunnelPayload,
+  wrapTunnelPayload
 } = require('../lib/key-address')
 
 const PROTO_ICMP = 1
@@ -137,7 +141,8 @@ describe('key-address', function () {
     table.register('10.0.0.2', keyB)
 
     const wire = table.encode(packet)
-    assert.equal(wire.length, packet.length - 8 + 64)
+    assert.equal(wire.length, packet.length + IPV4_PREFIX_LEN + 1 + 64 - IPV4_HEADER_LEN)
+    assert.equal(wire[IPV4_PREFIX_LEN], IPV4_WIRE_FLAG_SRC_KEYED | IPV4_WIRE_FLAG_DST_KEYED)
     assert.equal(wire.readUInt32BE(0) >>> 0, packet.readUInt32BE(0) >>> 0)
 
     const back = table.decode(wire)
@@ -200,18 +205,25 @@ describe('key-address', function () {
     assert.deepEqual(back, packet)
   })
 
-  it('encode fails when IP is not registered', function () {
-    const packet = ipv4Packet({
-      src: Buffer.from([10, 0, 0, 1]),
-      dst: Buffer.from([10, 0, 0, 3]),
-      proto: PROTO_UDP,
-      payload: udpPayload({ sport: 1, dport: 2 })
-    })
+  it('round-trips IPv4 with literal dst when dst is not an alias (full-tunnel style)', function () {
+    const src = Buffer.from([10, 0, 0, 1])
+    const dst = Buffer.from([8, 8, 8, 8])
+    const icmp = Buffer.alloc(8)
+    icmp[0] = 8
+    icmp[1] = 0
+    icmp.writeUInt16BE(0, 2)
+    icmp.writeUInt16BE(1, 4)
+    icmp.writeUInt16BE(0, 6)
+    let sum = 0
+    for (let i = 0; i < 8; i += 2) sum += icmp.readUInt16BE(i)
+    icmp.writeUInt16BE(fold16(sum), 2)
+
+    const packet = ipv4Packet({ src, dst, proto: PROTO_ICMP, payload: icmp })
     const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
     table.register('10.0.0.2', keyB)
-    assert.throws(function () {
-      table.encode(packet)
-    }, /No key registered/)
+    const wire = table.encode(packet)
+    assert.equal(wire[IPV4_PREFIX_LEN], IPV4_WIRE_FLAG_SRC_KEYED)
+    assert.deepEqual(table.decode(wire), packet)
   })
 
   it('round-trips IPv6 + UDP with keys and valid checksums', function () {
