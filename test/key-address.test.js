@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const {
   createKeyAddressTable,
   computeIpv4HeaderChecksum,
+  coerceIpv4SourceForMeshEncode,
   endpointPublicId,
   IPV4_HEADER_LEN,
   IPV4_PREFIX_LEN,
@@ -266,6 +267,39 @@ describe('key-address', function () {
     assert.doesNotThrow(function () {
       table.decode(wire)
     })
+  })
+
+  it('coerceIpv4SourceForMeshEncode preserves global src (internet reply to mesh peer)', function () {
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    table.register('10.0.0.2', keyB)
+    const src = Buffer.from([93, 184, 216, 34])
+    const dst = Buffer.from([10, 0, 0, 2])
+    const icmp = Buffer.alloc(8)
+    icmp[0] = 0
+    icmp[1] = 0
+    icmp.writeUInt16BE(0, 2)
+    icmp.writeUInt16BE(0, 4)
+    icmp.writeUInt16BE(0, 6)
+    const packet = ipv4Packet({ src, dst, proto: PROTO_ICMP, payload: icmp })
+    const out = coerceIpv4SourceForMeshEncode(packet, table, '10.0.0.1')
+    assert.deepEqual(out.subarray(12, 16), src)
+    assert.deepEqual(out.subarray(16, 20), dst)
+  })
+
+  it('coerceIpv4SourceForMeshEncode rewrites RFC1918 src when not in ka', function () {
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    table.register('10.0.0.2', keyB)
+    const src = Buffer.from([192, 168, 1, 99])
+    const dst = Buffer.from([10, 0, 0, 2])
+    const icmp = Buffer.alloc(8)
+    icmp[0] = 0
+    icmp[1] = 0
+    icmp.writeUInt16BE(0, 2)
+    icmp.writeUInt16BE(0, 4)
+    icmp.writeUInt16BE(0, 6)
+    const packet = ipv4Packet({ src, dst, proto: PROTO_ICMP, payload: icmp })
+    const out = coerceIpv4SourceForMeshEncode(packet, table, '10.0.0.1')
+    assert.deepEqual(out.subarray(12, 16), Buffer.from([10, 0, 0, 1]))
   })
 
   it('mesh keyed aliases round-trip with meshLiteralGuard set', function () {
