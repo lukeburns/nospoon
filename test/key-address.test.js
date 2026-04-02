@@ -226,6 +226,62 @@ describe('key-address', function () {
     assert.deepEqual(table.decode(wire), packet)
   })
 
+  it('decode rejects literal IPv4 in mesh guard CIDR (spoofed alias slot)', function () {
+    const prefix = Buffer.alloc(12)
+    prefix[0] = 0x45
+    prefix.writeUInt16BE(28, 2)
+    prefix.writeUInt16BE(0, 4)
+    prefix[8] = 64
+    prefix[9] = PROTO_ICMP
+    prefix.writeUInt16BE(0, 10)
+    const wire = Buffer.concat([
+      prefix,
+      Buffer.from([0]),
+      Buffer.from([10, 0, 0, 33]),
+      Buffer.from([8, 8, 8, 8]),
+      Buffer.alloc(0)
+    ])
+    const table = createKeyAddressTable({ meshIpv4LiteralGuardCidr: '10.0.0.0/24' })
+    assert.throws(function () {
+      table.decode(wire)
+    }, /literal address in mesh/)
+  })
+
+  it('decode allows literals outside mesh guard CIDR', function () {
+    const prefix = Buffer.alloc(12)
+    prefix[0] = 0x45
+    prefix.writeUInt16BE(28, 2)
+    prefix.writeUInt16BE(0, 4)
+    prefix[8] = 64
+    prefix[9] = PROTO_ICMP
+    prefix.writeUInt16BE(0, 10)
+    const wire = Buffer.concat([
+      prefix,
+      Buffer.from([0]),
+      Buffer.from([8, 8, 8, 8]),
+      Buffer.from([1, 1, 1, 1]),
+      Buffer.alloc(0)
+    ])
+    const table = createKeyAddressTable({ meshIpv4LiteralGuardCidr: '10.0.0.0/24' })
+    assert.doesNotThrow(function () {
+      table.decode(wire)
+    })
+  })
+
+  it('mesh keyed aliases round-trip with meshLiteralGuard set', function () {
+    const src = Buffer.from([10, 0, 0, 1])
+    const dst = Buffer.from([10, 0, 0, 2])
+    const udp = udpPayload({ sport: 1, dport: 2, data: Buffer.alloc(0) })
+    const packet = ipv4Packet({ src, dst, proto: PROTO_UDP, payload: udp })
+    const table = createKeyAddressTable({
+      localIp: '10.0.0.1',
+      localKey: keyA,
+      meshIpv4LiteralGuardCidr: '10.0.0.0/24'
+    })
+    table.register('10.0.0.2', keyB)
+    assert.deepEqual(table.decode(table.encode(packet)), packet)
+  })
+
   it('round-trips IPv6 + UDP with keys and valid checksums', function () {
     const udp = udp6Payload({
       sport: 52000,
