@@ -43,45 +43,94 @@ function afterPolicyPatch (onChanged) {
   return () => { onChanged?.() }
 }
 
-function PolicyToggles ({ policy, patchUrl, onChanged }) {
+function policyOsClass (state) {
+  if (state === 'ok') return 'ok'
+  if (state === 'error') return 'bad'
+  return 'dim'
+}
+
+/** One line of OS / debug status under a checkbox. */
+function PolicyOsLine ({ line }) {
+  if (!line || !line.text) return null
+  return (
+    <div className={'policy-os-line ' + policyOsClass(line.state)}>
+      {line.text}
+    </div>
+  )
+}
+
+/** Topic interfaces: full tunnel is stored but not applied by the control plane OS hooks yet. */
+const TOPIC_FULL_TUNNEL_OS = {
+  ingress: {
+    fullTunnel: { state: 'na', text: 'OS: not implemented for topic TUN here (policy is stored only).' },
+    relay: { state: 'stored', text: 'OS: not wired (flag stored only).' }
+  },
+  egress: {
+    fullTunnel: { state: 'na', text: 'OS: not implemented for topic TUN here (policy is stored only).' },
+    relay: { state: 'stored', text: 'OS: not wired (flag stored only).' }
+  }
+}
+
+function PolicyToggles ({ policy, patchUrl, onChanged, fullTunnelOs }) {
   const p = policy || DEFAULT_INTERFACE_POLICY
   const ing = policyIn(p)
   const eg = policyEg(p)
   const done = afterPolicyPatch(onChanged)
+  const os = fullTunnelOs
   return (
     <div className="policy-toggles">
       <div className="policy-group">
         <div className="policy-group-label">From peers (into this interface)</div>
-        <label>
-          <input type="checkbox" checked={ing.fullTunnel} onChange={(e) => patchJson(patchUrl, { ingress: { fullTunnel: e.target.checked } }).then(done)} />
-          Full tunnel — you are the exit: enable forwarding/NAT for this pool so this peer’s tunneled internet traffic can leave your machine
+        <label className="policy-toggle-row">
+          <span className="policy-toggle-input">
+            <input type="checkbox" checked={ing.fullTunnel} onChange={(e) => patchJson(patchUrl, { ingress: { fullTunnel: e.target.checked } }).then(done)} />
+          </span>
+          <span className="policy-toggle-body">
+            Full tunnel — you are the exit: enable forwarding/NAT for this pool so this peer’s tunneled internet traffic can leave your machine
+            {os ? <PolicyOsLine line={os.ingress.fullTunnel} /> : null}
+          </span>
         </label>
-        <label>
-          <input type="checkbox" checked={ing.relay} onChange={(e) => patchJson(patchUrl, { ingress: { relay: e.target.checked } }).then(done)} />
-          Relay — prefer routing via this peer (stored for future use)
+        <label className="policy-toggle-row">
+          <span className="policy-toggle-input">
+            <input type="checkbox" checked={ing.relay} onChange={(e) => patchJson(patchUrl, { ingress: { relay: e.target.checked } }).then(done)} />
+          </span>
+          <span className="policy-toggle-body">
+            Relay — prefer routing via this peer (stored for future use)
+            {os ? <PolicyOsLine line={os.ingress.relay} /> : null}
+          </span>
         </label>
       </div>
       <div className="policy-group">
         <div className="policy-group-label">To peers (out of this interface)</div>
-        <label>
-          <input type="checkbox" checked={eg.fullTunnel} onChange={(e) => patchJson(patchUrl, { egress: { fullTunnel: e.target.checked } }).then(done)} />
-          Full tunnel — route default traffic through this peer (they should enable ingress full tunnel for you); uses split routes while connected
+        <label className="policy-toggle-row">
+          <span className="policy-toggle-input">
+            <input type="checkbox" checked={eg.fullTunnel} onChange={(e) => patchJson(patchUrl, { egress: { fullTunnel: e.target.checked } }).then(done)} />
+          </span>
+          <span className="policy-toggle-body">
+            Full tunnel — route default traffic through this peer (they should enable ingress full tunnel for you); uses split routes while connected (IPv4)
+            {os ? <PolicyOsLine line={os.egress.fullTunnel} /> : null}
+          </span>
         </label>
-        <label>
-          <input type="checkbox" checked={eg.relay} onChange={(e) => patchJson(patchUrl, { egress: { relay: e.target.checked } }).then(done)} />
-          Relay — prefer routing via this peer (stored for future use)
+        <label className="policy-toggle-row">
+          <span className="policy-toggle-input">
+            <input type="checkbox" checked={eg.relay} onChange={(e) => patchJson(patchUrl, { egress: { relay: e.target.checked } }).then(done)} />
+          </span>
+          <span className="policy-toggle-body">
+            Relay — prefer routing via this peer (stored for future use)
+            {os ? <PolicyOsLine line={os.egress.relay} /> : null}
+          </span>
         </label>
       </div>
     </div>
   )
 }
 
-function InterfaceRoutingBlock ({ policy, apiPath, onChanged, blurb }) {
+function InterfaceRoutingBlock ({ policy, apiPath, onChanged, blurb, fullTunnelOs }) {
   return (
     <div className="policy-controls">
       <div className="policy-section-title">Routing for this interface</div>
       {blurb ? <p className="policy-blurb dim">{blurb}</p> : null}
-      <PolicyToggles policy={policy || DEFAULT_INTERFACE_POLICY} patchUrl={apiPath} onChanged={onChanged} />
+      <PolicyToggles policy={policy || DEFAULT_INTERFACE_POLICY} patchUrl={apiPath} onChanged={onChanged} fullTunnelOs={fullTunnelOs} />
     </div>
   )
 }
@@ -90,7 +139,7 @@ function peerPolicyUrl (apiPath, peerKeyHex, pathSuffix) {
   return `${apiPath}/${encodeURIComponent(peerKeyHex)}${pathSuffix || ''}`
 }
 
-function PeerRoutingBlock ({ peerKeyHex, policy, policyPatch, apiPath, pathSuffix = '' }) {
+function PeerRoutingBlock ({ peerKeyHex, policy, policyPatch, apiPath, pathSuffix = '', fullTunnelOs }) {
   const url = peerPolicyUrl(apiPath, peerKeyHex, pathSuffix)
   return (
     <div className="policy-controls peer-policy">
@@ -100,21 +149,31 @@ function PeerRoutingBlock ({ peerKeyHex, policy, policyPatch, apiPath, pathSuffi
           ? 'These values override the interface row for this peer only.'
           : 'Matches the interface row until you change something here.'}
       </p>
-      <PolicyToggles policy={policy || DEFAULT_INTERFACE_POLICY} patchUrl={url} />
+      <PolicyToggles policy={policy || DEFAULT_INTERFACE_POLICY} patchUrl={url} fullTunnelOs={fullTunnelOs} />
     </div>
   )
 }
 
-function PrimaryPolicyNotes ({ notes }) {
-  if (!notes) return null
+function PrimaryPolicyNotes ({ notes, fullTunnelOs }) {
+  if (!notes && !fullTunnelOs) return null
   const bits = []
-  if (notes.relayFlagsStoredOnly) bits.push('Relay flags are stored only (no relay path yet).')
-  if (notes.ingressFullTunnelApplied) {
-    bits.push('Ingress full tunnel is active: IP forwarding and NAT are enabled for this direct pool (peers need a live connection and toggled ingress for you).')
-  } else {
-    bits.push('Ingress full tunnel is inactive (no qualifying live peer, policy off, or NAT setup failed — often needs root).')
+  if (notes) {
+    if (notes.relayFlagsStoredOnly) bits.push('Relay flags are stored only (no relay path yet).')
+    if (notes.ingressFullTunnelApplied) {
+      bits.push('Ingress full tunnel is active: IP forwarding and NAT are enabled for this direct pool (peers need a live connection and toggled ingress for you).')
+    } else {
+      bits.push('Ingress full tunnel is inactive (no qualifying live peer, policy off, or NAT setup failed — often needs root).')
+    }
+    if (notes.egressFullTunnelAppliesToOsRoutes) bits.push('Egress full tunnel updates host routes on this machine when peers connect.')
   }
-  if (notes.egressFullTunnelAppliesToOsRoutes) bits.push('Egress full tunnel updates host routes on this machine when peers connect.')
+  if (fullTunnelOs) {
+    const last = [fullTunnelOs.lastIngressError, fullTunnelOs.lastEgressError].filter(Boolean).join(' · ')
+    bits.push(
+      `Pool debug: TUN ${fullTunnelOs.tunName || '—'} · IPv4-only · clientRoutes=${String(fullTunnelOs.clientRoutesActive)} · serverNat=${String(fullTunnelOs.serverNatActive)}` +
+        (last ? ` · last errors: ${last}` : '')
+    )
+    bits.push('Tip: `curl -4 ifconfig.me/ip` checks IPv4; IPv6 can bypass this tunnel.')
+  }
   if (bits.length === 0) return null
   return (
     <p className="policy-notes dim">
@@ -181,6 +240,7 @@ function TopicCard ({ topic, onLeave }) {
         policy={topic.policy}
         apiPath={topicPolicyPath}
         blurb="Defaults for every peer on this topic TUN. A per-peer section below can override."
+        fullTunnelOs={TOPIC_FULL_TUNNEL_OS}
       />
       <div className="dim meta-tight">discovery {topic.discoveryKeyZ32}</div>
       <div className="dim meta-tight">
@@ -208,6 +268,7 @@ function TopicCard ({ topic, onLeave }) {
               policyPatch={p.policyPatch}
               apiPath={topicPeersPolicyBase}
               pathSuffix="/policy"
+              fullTunnelOs={TOPIC_FULL_TUNNEL_OS}
             />
           </div>
         ))
@@ -244,8 +305,9 @@ function PrimaryInterfaceCard ({
         policy={directPool.policy}
         apiPath="/api/policy/primary"
         blurb="Defaults for every direct peer. A per-peer section below can override."
+        fullTunnelOs={directPool.fullTunnelOsInterface}
       />
-      <PrimaryPolicyNotes notes={directPool.policyNotes} />
+      <PrimaryPolicyNotes notes={directPool.policyNotes} fullTunnelOs={directPool.fullTunnelOs} />
       <p className="meta meta-tight">
         Local address <IpLink ip={directPool.localTunIp} />
       </p>
@@ -282,6 +344,7 @@ function PrimaryInterfaceCard ({
                 policy={d.policy}
                 policyPatch={d.policyPatch}
                 apiPath="/api/policy/primary/peers"
+                fullTunnelOs={d.fullTunnelOs}
               />
             </div>
           )
