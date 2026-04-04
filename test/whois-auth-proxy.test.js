@@ -28,6 +28,11 @@ describe('whois-auth-proxy', function () {
         res.end('ok\n')
         return
       }
+      if (u === '/api/whois/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('defaultkey\n')
+        return
+      }
       res.writeHead(404)
       res.end()
     })
@@ -68,15 +73,23 @@ describe('whois-auth-proxy', function () {
     assert.equal(body, 'ok\n')
   })
 
-  it('404 for / and for two path segments', async function () {
-    const r0 = await httpGet({
+  it('maps GET / to upstream /api/whois/', async function () {
+    const r = await httpGet({
       hostname: '127.0.0.1',
       port: proxyPort,
       path: '/'
     })
-    assert.equal(r0.statusCode, 404)
-    r0.resume()
+    assert.equal(r.statusCode, 200)
+    const body = await new Promise(function (resolve, reject) {
+      const chunks = []
+      r.on('data', (c) => chunks.push(c))
+      r.on('end', () => resolve(Buffer.concat(chunks).toString()))
+      r.on('error', reject)
+    })
+    assert.equal(body, 'defaultkey\n')
+  })
 
+  it('404 for two path segments', async function () {
     const r1 = await httpGet({
       hostname: '127.0.0.1',
       port: proxyPort,
