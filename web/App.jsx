@@ -206,7 +206,7 @@ function PolicyDisclosure ({ title, variant, defaultOpen = false, children }) {
   )
 }
 
-function InterfaceRoutingBlock ({ policy, apiPath, onChanged, blurb, fullTunnelOs, defaultOpen = true }) {
+function InterfaceRoutingBlock ({ policy, apiPath, onChanged, blurb, fullTunnelOs, defaultOpen = false }) {
   return (
     <div className="policy-controls">
       <PolicyDisclosure title="Interface policy" variant="interface" defaultOpen={defaultOpen}>
