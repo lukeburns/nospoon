@@ -68,6 +68,13 @@ a.bad {
 a.dim {
   color: var(--muted);
 }
+a.peer-key-link {
+  color: inherit;
+  text-decoration: none;
+}
+a.peer-key-link:hover {
+  text-decoration: underline;
+}
 form {
   display: flex;
   flex-wrap: wrap;
@@ -179,6 +186,18 @@ button.small {
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.25rem;
+}
+.peer-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.reservation-form {
+  margin-top: 0.25rem;
+}
+.reserved-peer-row .peer-row-head {
+  align-items: center;
 }
 .peer-key-z32 {
   font-weight: 600;
@@ -323,4 +342,24 @@ button.small {
   font-size: 10px;
   line-height: 1.35;
   opacity: 0.92;
+}
+
+.dns-toggle-spaced {
+  margin: 0.5rem 0 0.35rem;
+  cursor: default;
+}
+.dns-settings-form,
+.dns-manual-form {
+  margin: 0.5rem 0;
+}
+.dns-manual-head {
+  margin-top: 0.75rem;
+}
+.dns-forward-check {
+  flex-direction: row;
+  align-items: center;
+  align-self: center;
+}
+.dns-interface-card .policy-disclosure-body form label {
+  min-width: 8rem;
 }

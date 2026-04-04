@@ -68,7 +68,7 @@ function validateMtu (value) {
 }
 
 function parseWebFlags (args) {
-  const flags = { port: 8790, host: '127.0.0.1' }
+  const flags = { port: 8790, host: '127.0.0.1', primaryCidr: null }
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       const p = parseInt(args[++i], 10)
@@ -79,6 +79,8 @@ function parseWebFlags (args) {
       flags.port = p
     } else if (args[i] === '--host' && args[i + 1]) {
       flags.host = args[++i]
+    } else if (args[i] === '--primary-cidr' && args[i + 1]) {
+      flags.primaryCidr = validateCidr(args[++i], '--primary-cidr')
     } else if (args[i].startsWith('--')) {
       console.error(`Error: unknown web option: ${args[i]}`)
       process.exit(1)
@@ -274,6 +276,7 @@ Swarm options:
 Web control (sudo for TUN when joining topics or peers):
   --port <num>          HTTP port (default: 8790)
   --host <addr>         Bind address (default: 127.0.0.1)
+  --primary-cidr <c>    Fixed primary (direct pool) IPv4 CIDR instead of auto 10.0.x.1/24
 
   From the repo, \`npm run dev -- --port <n> [--host <addr>]\` runs this server on <n> (and Vite on <n+1>).
   Use \`--host\` or \`--address\` for the bind address (default 127.0.0.1).

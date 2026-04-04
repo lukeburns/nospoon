@@ -13,6 +13,21 @@ describe('control-http', function () {
     assert.deepEqual(s.topics, [])
     assert.equal(s.directPool, null)
     assert.deepEqual(s.directPeers, [])
+    assert.equal(s.primaryCidrOverride, null)
+    assert.ok(s.meshReservations)
+    assert.equal(s.meshReservations.primaryCidr, null)
+    assert.deepEqual(s.meshReservations.primary, [])
+    assert.ok(s.dns)
+    assert.equal(s.dns.enabled, false)
+    assert.equal(s.dns.listening, false)
+    return m.destroy()
+  })
+
+  it('accepts primaryCidr override in constructor', function () {
+    const m = new ControlPlaneSessionManager({
+      primaryCidr: '10.0.99.1/24'
+    })
+    assert.equal(m.getStatus().primaryCidrOverride, '10.0.99.1/24')
     return m.destroy()
   })
 })

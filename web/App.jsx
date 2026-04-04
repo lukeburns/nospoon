@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
+import z32 from 'z32'
 
 const emptyStatus = {
   clientPublicKeyZ32: '',
   topics: [],
   directPool: null,
-  directPeers: []
+  directPeers: [],
+  meshReservations: {
+    primaryCidr: null,
+    primary: [],
+    topicSubnets: {},
+    topics: {}
+  },
+  primaryCidrOverride: null,
+  dns: {
+    enabled: false,
+    listening: false,
+    port: 5343,
+    address: '127.0.0.1',
+    forwardEnabled: true,
+    forward: '1.1.1.1',
+    lastError: null,
+    manual: []
+  }
 }
 
 /** Fallback when the server omits `policy` (older builds); keeps controls on-screen. */
@@ -23,6 +41,12 @@ function policyEg (p) {
   return p.egress || { fullTunnel: false, relay: false }
 }
 
+async function readJson (res) {
+  const j = await res.json()
+  if (!res.ok) throw new Error(j.error || String(res.status))
+  return j
+}
+
 async function patchJson (url, body) {
   const res = await fetch(url, {
     method: 'PATCH',
@@ -30,6 +54,42 @@ async function patchJson (url, body) {
     body: JSON.stringify(body || {})
   })
   return readJson(res)
+}
+
+async function postMeshReservation (body) {
+  const res = await fetch('/api/mesh-reservations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  return readJson(res)
+}
+
+/** @param {string} sk */
+function keyHexFromPrimaryMeshIdKey (sk) {
+  if (typeof sk !== 'string' || !sk.startsWith('k:')) return null
+  const h = sk.slice(2)
+  return /^[0-9a-f]{64}$/i.test(h) ? h.toLowerCase() : null
+}
+
+/** @param {string} sk */
+function keyHexFromTopicMeshIdKey (sk) {
+  const m = /^kt:([0-9a-f]{64}):/i.exec(String(sk || ''))
+  return m ? m[1].toLowerCase() : null
+}
+
+/** @param {string} hex */
+function displayZ32FromHex64 (hex) {
+  if (!hex || hex.length !== 64) return hex || '—'
+  try {
+    const u = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) {
+      u[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+    }
+    return z32.encode(u)
+  } catch {
+    return hex.slice(0, 12) + '…'
+  }
 }
 
 function afterPolicyPatch (onChanged) {
@@ -126,10 +186,15 @@ function PolicyToggles ({ policy, patchUrl, onChanged, fullTunnelOs }) {
  * Collapsible policy block; uses <details> for a11y. Chevron rotates when open.
  * @param {'interface'|'peer'} variant
  */
-function PolicyDisclosure ({ title, variant, defaultOpen, children }) {
+function PolicyDisclosure ({ title, variant, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(() => Boolean(defaultOpen))
   const cls = 'policy-disclosure' + (variant === 'peer' ? ' policy-disclosure-peer' : '')
   return (
-    <details className={cls} defaultOpen={defaultOpen}>
+    <details
+      className={cls}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
       <summary className="policy-disclosure-summary">
         <span className="policy-disclosure-chevron" aria-hidden="true">
           ▸
@@ -147,6 +212,95 @@ function InterfaceRoutingBlock ({ policy, apiPath, onChanged, blurb, fullTunnelO
       <PolicyDisclosure title="Interface policy" variant="interface" defaultOpen={defaultOpen}>
         {blurb ? <p className="policy-blurb dim">{blurb}</p> : null}
         <PolicyToggles policy={policy || DEFAULT_INTERFACE_POLICY} patchUrl={apiPath} onChanged={onChanged} fullTunnelOs={fullTunnelOs} />
+      </PolicyDisclosure>
+    </div>
+  )
+}
+
+/**
+ * @param {object} props
+ * @param {string} props.blurb
+ * @param {boolean} props.defaultOpen
+ * @param {Array<{ meshIdKey: string, ipv4: string }>} props.rows
+ * @param {function(string): string|null} props.parseKeyHex
+ * @param {(keyHex: string) => void} props.onConnect
+ * @param {(keyHex: string) => void} props.onRelease
+ * @param {(e: { preventDefault: function(), currentTarget: HTMLFormElement }) => void} props.onReserveSubmit
+ * @param {boolean} props.reserveBusy
+ * @param {{ kind?: string, text?: string } | null} props.reserveMsg
+ * @param {string} props.reserveInputName
+ */
+function InterfaceReservationsBlock ({
+  blurb,
+  defaultOpen = false,
+  rows,
+  parseKeyHex,
+  onConnect,
+  onRelease,
+  onReserveSubmit,
+  reserveBusy,
+  reserveMsg,
+  reserveInputName = 'resKey'
+}) {
+  const list = rows || []
+  return (
+    <div className="policy-controls">
+      <PolicyDisclosure title="Interface reservations" variant="interface" defaultOpen={defaultOpen}>
+        {blurb ? <p className="policy-blurb dim">{blurb}</p> : null}
+        <form className="reservation-form" onSubmit={onReserveSubmit}>
+          <label>
+            Peer public key
+            <input
+              name={reserveInputName}
+              placeholder="z32 or 64 hex"
+              required
+              autoComplete="off"
+              disabled={reserveBusy}
+            />
+          </label>
+          <button type="submit" disabled={reserveBusy}>
+            {reserveBusy ? 'Reserving…' : 'Reserve peer'}
+          </button>
+        </form>
+        <FormStatus kind={reserveMsg?.kind} text={reserveMsg?.text} />
+        {list.length === 0 ? (
+          <p className="dim meta-tight">(no reserved peers)</p>
+        ) : (
+          list.map((r) => {
+            const keyHex = parseKeyHex(r.meshIdKey)
+            const label = keyHex ? displayZ32FromHex64(keyHex) : r.meshIdKey
+            return (
+              <div key={r.meshIdKey} className="row reserved-peer-row">
+                <div className="peer-row-head">
+                  <span>
+                    <strong className="peer-key-z32">{label}</strong>
+                    <span className="dim"> reserved</span>
+                    {' → '}
+                    <IpLink ip={r.ipv4} className="dim" />
+                  </span>
+                  <span className="peer-row-actions">
+                    <button
+                      type="button"
+                      className="small"
+                      disabled={!keyHex}
+                      onClick={() => keyHex && onConnect(keyHex)}
+                    >
+                      Connect
+                    </button>
+                    <button
+                      type="button"
+                      className="small"
+                      disabled={!keyHex}
+                      onClick={() => keyHex && onRelease(keyHex)}
+                    >
+                      Release
+                    </button>
+                  </span>
+                </div>
+              </div>
+            )
+          })
+        )}
       </PolicyDisclosure>
     </div>
   )
@@ -196,6 +350,24 @@ function CidrLink ({ cidr }) {
   )
 }
 
+/** When mesh DNS is on, peer keys become `http://<meshDnsWireName>/` (primary = z32 key; topic = z32.topic). */
+function PeerMeshKeyLink ({ z32, meshDnsWireName, dnsEnabled, strongClass }) {
+  const safe =
+    dnsEnabled &&
+    meshDnsWireName &&
+    /^[a-z0-9][a-z0-9.-]{0,251}$/i.test(String(meshDnsWireName))
+  if (safe) {
+    const label = strongClass ? <strong className={strongClass}>{z32}</strong> : z32
+    return (
+      <a href={`http://${meshDnsWireName}/`} target="_blank" rel="noopener noreferrer" className="peer-key-link">
+        {label}
+      </a>
+    )
+  }
+  if (strongClass) return <strong className={strongClass}>{z32}</strong>
+  return z32
+}
+
 function FormStatus ({ kind, text }) {
   if (!text) return null
   return (
@@ -205,10 +377,65 @@ function FormStatus ({ kind, text }) {
   )
 }
 
-function TopicCard ({ topic, onLeave }) {
+function TopicCard ({ topic, onLeave, reservationRows = [], dnsEnabled = false }) {
   const peers = topic.peers || []
   const topicPolicyPath = `/api/topics/${encodeURIComponent(topic.id)}/policy`
   const topicPeersPolicyBase = `/api/topics/${encodeURIComponent(topic.id)}/peers`
+  const [resBusy, setResBusy] = useState(false)
+  const [resMsg, setResMsg] = useState(null)
+
+  const onTopicReserveSubmit = useCallback(
+    (e) => {
+      e.preventDefault()
+      const form = e.currentTarget
+      const key = String(new FormData(form).get('reserveKey') || '').trim()
+      if (!key || resBusy) return
+      setResBusy(true)
+      setResMsg({ kind: 'pending', text: 'Reserving address…' })
+      postMeshReservation({ op: 'reserveTopic', topicId: topic.id, key })
+        .then(() => {
+          form.reset()
+          setResMsg({ kind: 'ok', text: 'Reserved.' })
+          window.setTimeout(() => setResMsg(null), 2200)
+        })
+        .catch((err) => {
+          setResMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(() => setResBusy(false))
+    },
+    [topic.id, resBusy]
+  )
+
+  const connectTopicReserved = useCallback((keyHex) => {
+    fetch('/api/peers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: keyHex })
+    })
+      .then((r) => readJson(r))
+      .catch((err) => {
+        setResMsg({ kind: 'err', text: err.message || String(err) })
+      })
+  }, [])
+
+  const releaseTopicReserved = useCallback(
+    (keyHex) => {
+      postMeshReservation({
+        op: 'releaseTopic',
+        topicId: topic.id,
+        key: keyHex
+      })
+        .then(() => {
+          setResMsg({ kind: 'ok', text: 'Released.' })
+          window.setTimeout(() => setResMsg(null), 2200)
+        })
+        .catch((err) => {
+          setResMsg({ kind: 'err', text: err.message || String(err) })
+        })
+    },
+    [topic.id]
+  )
+
   return (
     <div className="card interface-card">
       <div className="interface-card-head">
@@ -221,6 +448,18 @@ function TopicCard ({ topic, onLeave }) {
           Leave topic
         </button>
       </div>
+      <InterfaceReservationsBlock
+        blurb="Reserve the next free IPv4 in this topic subnet before a peer is on the mesh. Connect also joins the primary direct pool for that key (helps discovery paths)."
+        defaultOpen={false}
+        rows={reservationRows}
+        parseKeyHex={keyHexFromTopicMeshIdKey}
+        onConnect={connectTopicReserved}
+        onRelease={releaseTopicReserved}
+        onReserveSubmit={onTopicReserveSubmit}
+        reserveBusy={resBusy}
+        reserveMsg={resMsg}
+        reserveInputName="reserveKey"
+      />
       <InterfaceRoutingBlock
         policy={topic.policy}
         apiPath={topicPolicyPath}
@@ -238,7 +477,12 @@ function TopicCard ({ topic, onLeave }) {
           <div key={p.peerKeyHex} className="row">
             <div className="peer-row-head">
               <span>
-                {p.peerKeyZ32} → <IpLink ip={p.ipv4} /> 
+                <PeerMeshKeyLink
+                  z32={p.peerKeyZ32}
+                  meshDnsWireName={p.meshDnsWireName}
+                  dnsEnabled={dnsEnabled}
+                />{' '}
+                → <IpLink ip={p.ipv4} />
               </span>
             </div>
             <PeerRoutingBlock
@@ -255,7 +499,18 @@ function TopicCard ({ topic, onLeave }) {
   )
 }
 
-function PrimaryInterfaceCard ({ directPool, directPeers, leavePeer }) {
+function PrimaryInterfaceCard ({
+  directPool,
+  directPeers,
+  leavePeer,
+  primaryReservationRows,
+  onPrimaryReserveSubmit,
+  primaryResBusy,
+  primaryResMsg,
+  onReleasePrimaryReservation,
+  onConnectReservedPeer,
+  dnsEnabled = false
+}) {
   if (!directPool) {
     return (
       <p className="dim">
@@ -272,6 +527,18 @@ function PrimaryInterfaceCard ({ directPool, directPeers, leavePeer }) {
           <CidrLink cidr={directPool.cidr} />
         </span>
       </div>
+      <InterfaceReservationsBlock
+        blurb="Reserve the next free IPv4 in the primary subnet before a HyperDHT stream exists. Connect opens a direct peer session using the reserved address."
+        defaultOpen={false}
+        rows={primaryReservationRows}
+        parseKeyHex={keyHexFromPrimaryMeshIdKey}
+        onConnect={onConnectReservedPeer}
+        onRelease={onReleasePrimaryReservation}
+        onReserveSubmit={onPrimaryReserveSubmit}
+        reserveBusy={primaryResBusy}
+        reserveMsg={primaryResMsg}
+        reserveInputName="primaryReserveKey"
+      />
       <InterfaceRoutingBlock
         policy={directPool.policy}
         apiPath="/api/policy/primary"
@@ -286,7 +553,12 @@ function PrimaryInterfaceCard ({ directPool, directPeers, leavePeer }) {
             <div key={d.keyHex} className="row">
               <div className="peer-row-head">
                 <span>
-                  <strong className="peer-key-z32">{d.keyZ32}</strong>
+                  <PeerMeshKeyLink
+                    z32={d.keyZ32}
+                    meshDnsWireName={d.meshDnsWireName}
+                    dnsEnabled={dnsEnabled}
+                    strongClass="peer-key-z32"
+                  />
                   {' → '}
                   <IpLink ip={d.peerAliasIp} className={st} />
                   {d.err ? <span className="bad"> {d.err}</span> : null}
@@ -309,10 +581,265 @@ function PrimaryInterfaceCard ({ directPool, directPeers, leavePeer }) {
   )
 }
 
-async function readJson (res) {
-  const j = await res.json()
-  if (!res.ok) throw new Error(j.error || String(res.status))
-  return j
+function DnsInterfaceCard ({ dns, onPatchDns }) {
+  const d = dns || {}
+  const [portStr, setPortStr] = useState(String(d.port ?? 5343))
+  const [addrStr, setAddrStr] = useState(d.address || '127.0.0.1')
+  const [fwdStr, setFwdStr] = useState(d.forward || '1.1.1.1')
+  const [fwdEn, setFwdEn] = useState(d.forwardEnabled !== false)
+  const [applyBusy, setApplyBusy] = useState(false)
+  const [manualMsg, setManualMsg] = useState(null)
+
+  useEffect(
+    function () {
+      if (!dns) return
+      setPortStr(String(dns.port ?? 5343))
+      setAddrStr(dns.address || '127.0.0.1')
+      setFwdStr(dns.forward || '1.1.1.1')
+      setFwdEn(dns.forwardEnabled !== false)
+    },
+    [dns, dns?.port, dns?.address, dns?.forward, dns?.forwardEnabled]
+  )
+
+  const toggleEnabled = useCallback(
+    function (checked) {
+      onPatchDns({ enabled: checked }).catch(function (err) {
+        setManualMsg({ kind: 'err', text: err.message || String(err) })
+      })
+    },
+    [onPatchDns]
+  )
+
+  const applySettings = useCallback(
+    function (e) {
+      e.preventDefault()
+      const p = parseInt(portStr, 10)
+      if (Number.isNaN(p) || p < 1 || p > 65535) {
+        setManualMsg({ kind: 'err', text: 'Port must be 1–65535' })
+        return
+      }
+      setApplyBusy(true)
+      setManualMsg(null)
+      onPatchDns({
+        port: p,
+        address: addrStr.trim(),
+        forwardEnabled: fwdEn,
+        forward: fwdEn ? fwdStr.trim() : null
+      })
+        .then(function () {
+          setManualMsg({ kind: 'ok', text: 'DNS settings applied.' })
+          window.setTimeout(function () {
+            setManualMsg(null)
+          }, 2200)
+        })
+        .catch(function (err) {
+          setManualMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setApplyBusy(false)
+        })
+    },
+    [onPatchDns, portStr, addrStr, fwdEn, fwdStr]
+  )
+
+  const onManualSubmit = useCallback(
+    function (e) {
+      e.preventDefault()
+      const form = e.currentTarget
+      const fd = new FormData(form)
+      const hostname = String(fd.get('dnsHost') || '').trim()
+      const ipv4 = String(fd.get('dnsIpv4') || '').trim()
+      const ipv6 = String(fd.get('dnsIpv6') || '').trim()
+      if (!hostname) return
+      if (!ipv4 && !ipv6) {
+        setManualMsg({ kind: 'err', text: 'Provide ipv4 and/or ipv6' })
+        return
+      }
+      fetch('/api/dns/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostname,
+          ipv4: ipv4 || undefined,
+          ipv6: ipv6 || undefined
+        })
+      })
+        .then(function (r) {
+          return readJson(r)
+        })
+        .then(function () {
+          form.reset()
+          setManualMsg({ kind: 'ok', text: 'Manual record added.' })
+          window.setTimeout(function () {
+            setManualMsg(null)
+          }, 2200)
+        })
+        .catch(function (err) {
+          setManualMsg({ kind: 'err', text: err.message || String(err) })
+        })
+    },
+    []
+  )
+
+  const deleteManual = useCallback(function (hostname) {
+    fetch('/api/dns/manual/' + encodeURIComponent(hostname), { method: 'DELETE' })
+      .then(function (r) {
+        return readJson(r)
+      })
+      .catch(function (err) {
+        setManualMsg({ kind: 'err', text: err.message || String(err) })
+      })
+  }, [])
+
+  const manual = d.manual || []
+
+  return (
+    <div className="card interface-card dns-interface-card">
+      <div className="interface-card-head">
+        <span className="interface-card-title">
+          <strong>DNS</strong>
+          {' · '}
+          <span className="dim">
+            {d.listening
+              ? `listening ${d.address}:${d.port}`
+              : d.enabled
+                ? 'enabled (not bound — see error)'
+                : 'off'}
+          </span>
+        </span>
+      </div>
+      <div className="policy-controls">
+        <PolicyDisclosure title="DNS interface" variant="interface" defaultOpen={false}>
+          <p className="policy-blurb dim">
+            UDP DNS for this control plane: <strong>z32(key)</strong> and{' '}
+            <strong>z32(key).topicRef</strong> (topic UUID or topic name) resolve to mesh IPv4 using
+            the same reservations and tunnels as the web UI. Other names use the manual table or
+            upstream forwarding.
+          </p>
+          {d.lastError ? (
+            <p className="form-status err" role="alert">
+              {d.lastError}
+            </p>
+          ) : null}
+          <label className="policy-toggle-row dns-toggle-spaced">
+            <span className="policy-toggle-input">
+              <input
+                type="checkbox"
+                checked={Boolean(d.enabled)}
+                onChange={function (e) {
+                  toggleEnabled(e.target.checked)
+                }}
+              />
+            </span>
+            <span className="policy-toggle-body">DNS server enabled</span>
+          </label>
+          <form className="dns-settings-form" onSubmit={applySettings}>
+            <label>
+              Bind address
+              <input
+                value={addrStr}
+                onChange={function (e) {
+                  setAddrStr(e.target.value)
+                }}
+                autoComplete="off"
+                disabled={applyBusy}
+              />
+            </label>
+            <label>
+              Port
+              <input
+                value={portStr}
+                onChange={function (e) {
+                  setPortStr(e.target.value)
+                }}
+                autoComplete="off"
+                disabled={applyBusy}
+              />
+            </label>
+            <label className="dns-forward-check">
+              <input
+                type="checkbox"
+                checked={fwdEn}
+                onChange={function (e) {
+                  setFwdEn(e.target.checked)
+                }}
+                disabled={applyBusy}
+              />{' '}
+              Forward other queries upstream
+            </label>
+            <label>
+              Upstream
+              <input
+                value={fwdStr}
+                onChange={function (e) {
+                  setFwdStr(e.target.value)
+                }}
+                placeholder="1.1.1.1"
+                autoComplete="off"
+                disabled={applyBusy || !fwdEn}
+              />
+            </label>
+            <button type="submit" disabled={applyBusy}>
+              {applyBusy ? 'Applying…' : 'Apply bind / forward'}
+            </button>
+          </form>
+          <FormStatus kind={manualMsg?.kind} text={manualMsg?.text} />
+          <p className="policy-group-head dns-manual-head">Manual hostnames</p>
+          <form className="dns-manual-form" onSubmit={onManualSubmit}>
+            <label>
+              Hostname
+              <input name="dnsHost" placeholder="app.lan" required autoComplete="off" />
+            </label>
+            <label>
+              IPv4
+              <input name="dnsIpv4" placeholder="10.0.0.50" autoComplete="off" />
+            </label>
+            <label>
+              IPv6
+              <input name="dnsIpv6" placeholder="fd00::1" autoComplete="off" />
+            </label>
+            <button type="submit">Add</button>
+          </form>
+          {manual.length === 0 ? (
+            <p className="dim meta-tight">(no manual records)</p>
+          ) : (
+            manual.map(function (row) {
+              return (
+                <div key={row.hostname} className="row dns-manual-row">
+                  <div className="peer-row-head">
+                    <span>
+                      <strong>{row.hostname}</strong>
+                      {row.ipv4 ? (
+                        <>
+                          {' → '}
+                          <IpLink ip={row.ipv4} />
+                        </>
+                      ) : null}
+                      {row.ipv6 ? (
+                        <>
+                          {' · '}
+                          <span className="dim">{row.ipv6}</span>
+                        </>
+                      ) : null}
+                    </span>
+                    <button
+                      type="button"
+                      className="small"
+                      onClick={function () {
+                        deleteManual(row.hostname)
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </PolicyDisclosure>
+      </div>
+    </div>
+  )
 }
 
 export default function App () {
@@ -322,6 +849,8 @@ export default function App () {
   const [topicMsg, setTopicMsg] = useState(null)
   const [peerBusy, setPeerBusy] = useState(false)
   const [peerMsg, setPeerMsg] = useState(null)
+  const [primaryResBusy, setPrimaryResBusy] = useState(false)
+  const [primaryResMsg, setPrimaryResMsg] = useState(null)
 
   useEffect(() => {
     fetch('/api/status')
@@ -346,6 +875,55 @@ export default function App () {
 
   const leavePeer = useCallback((keyHex) => {
     fetch('/api/peers/' + keyHex, { method: 'DELETE' }).catch(() => {})
+  }, [])
+
+  const onPrimaryReserveSubmit = useCallback(
+    (e) => {
+      e.preventDefault()
+      const form = e.currentTarget
+      const key = String(new FormData(form).get('primaryReserveKey') || '').trim()
+      if (!key || primaryResBusy) return
+      setPrimaryResBusy(true)
+      setPrimaryResMsg({ kind: 'pending', text: 'Reserving address…' })
+      postMeshReservation({ op: 'reservePrimary', key })
+        .then(() => {
+          form.reset()
+          setPrimaryResMsg({ kind: 'ok', text: 'Reserved.' })
+          window.setTimeout(() => setPrimaryResMsg(null), 2200)
+        })
+        .catch((err) => {
+          setPrimaryResMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(() => setPrimaryResBusy(false))
+    },
+    [primaryResBusy]
+  )
+
+  const onReleasePrimaryReservation = useCallback((keyHex) => {
+    postMeshReservation({ op: 'releasePrimary', key: keyHex })
+      .then(() => {
+        setPrimaryResMsg({ kind: 'ok', text: 'Released.' })
+        window.setTimeout(() => setPrimaryResMsg(null), 2200)
+      })
+      .catch((err) => {
+        setPrimaryResMsg({ kind: 'err', text: err.message || String(err) })
+      })
+  }, [])
+
+  const onConnectReservedPeer = useCallback((keyHex) => {
+    fetch('/api/peers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: keyHex })
+    })
+      .then((r) => readJson(r))
+      .then(() => {
+        setPrimaryResMsg({ kind: 'ok', text: 'Connect started.' })
+        window.setTimeout(() => setPrimaryResMsg(null), 2200)
+      })
+      .catch((err) => {
+        setPrimaryResMsg({ kind: 'err', text: err.message || String(err) })
+      })
   }, [])
 
   const onTopicSubmit = useCallback((e) => {
@@ -395,9 +973,22 @@ export default function App () {
       .finally(() => setPeerBusy(false))
   }, [peerBusy])
 
+  const patchDns = useCallback(function (body) {
+    return fetch('/api/dns', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return readJson(r)
+    })
+  }, [])
+
   const s = status || emptyStatus
   const topics = s.topics || []
   const directPeers = s.directPeers || []
+  const meshRes = s.meshReservations || emptyStatus.meshReservations
+  const topicReservationMap = meshRes.topics || {}
+  const dns = s.dns || emptyStatus.dns
 
   return (
     <>
@@ -422,7 +1013,21 @@ export default function App () {
         </button>
       </form>
       <FormStatus kind={peerMsg?.kind} text={peerMsg?.text} />
-      <PrimaryInterfaceCard directPool={s.directPool} directPeers={directPeers} leavePeer={leavePeer} />
+      <PrimaryInterfaceCard
+        directPool={s.directPool}
+        directPeers={directPeers}
+        leavePeer={leavePeer}
+        primaryReservationRows={meshRes.primary || []}
+        onPrimaryReserveSubmit={onPrimaryReserveSubmit}
+        primaryResBusy={primaryResBusy}
+        primaryResMsg={primaryResMsg}
+        onReleasePrimaryReservation={onReleasePrimaryReservation}
+        onConnectReservedPeer={onConnectReservedPeer}
+        dnsEnabled={Boolean(dns.enabled)}
+      />
+
+      <h2>DNS interface</h2>
+      <DnsInterfaceCard dns={dns} onPatchDns={patchDns} />
 
       <h2>Topic interfaces</h2>
       <form onSubmit={onTopicSubmit}>
@@ -438,7 +1043,15 @@ export default function App () {
       {topics.length === 0 ? (
         <p className="dim">(no topic interfaces yet)</p>
       ) : (
-        topics.map((t) => <TopicCard key={t.id} topic={t} onLeave={leaveTopic} />)
+        topics.map((t) => (
+          <TopicCard
+            key={t.id}
+            topic={t}
+            onLeave={leaveTopic}
+            reservationRows={topicReservationMap[t.id] || []}
+            dnsEnabled={Boolean(dns.enabled)}
+          />
+        ))
       )}
     </>
   )
