@@ -14,7 +14,7 @@ const emptyStatus = {
   },
   primaryCidrOverride: null,
   dns: {
-    enabled: false,
+    enabled: true,
     listening: false,
     port: 53,
     address: '127.0.0.1',

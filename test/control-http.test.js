@@ -18,7 +18,7 @@ describe('control-http', function () {
     assert.equal(s.meshReservations.primaryCidr, null)
     assert.deepEqual(s.meshReservations.primary, [])
     assert.ok(s.dns)
-    assert.equal(s.dns.enabled, false)
+    assert.equal(s.dns.enabled, true)
     assert.equal(s.dns.listening, false)
     return m.destroy()
   })
