@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Run `nospoon web` on --port and Vite (HMR) on port+1, with /api proxied to the control server.
+ * Run `nospoon` (control plane) on --port and Vite (HMR) on port+1, with /api proxied to the control server.
  *
  * HTTP binds before TUN: the control server listens first, then brings up Hyperswarm + primary TUN.
  * Starts Vite only after the control port accepts connections (avoids ECONNREFUSED races).
  * Use sudo if utun/TUN creation requires it.
  *
- * Flags: --port / -p, --host / --address (bind for both nospoon web and Vite; default 127.0.0.1).
+ * Flags: --port / -p, --host / --address (bind for both nospoon and Vite; default 127.0.0.1).
  * For --host 0.0.0.0 the proxy and readiness probe use 127.0.0.1 (same machine).
  *
  * Same TCP port for both is not practical with two separate processes; serving HMR from the
@@ -85,7 +85,7 @@ function waitForListen (port, probeHost, timeoutMs = 60000) {
         if (Date.now() >= deadline) {
           reject(
             new Error(
-              `dev: timed out waiting for ${probeHost}:${port} (did nospoon web fail to bind?)`
+              `dev: timed out waiting for ${probeHost}:${port} (did nospoon fail to bind?)`
             )
           )
         } else {
@@ -129,7 +129,7 @@ process.on('SIGTERM', () => {
 const displayApiOrigin =
   port === 80 ? `http://${displayUrlHost}/` : `http://${displayUrlHost}:${port}/`
 console.log('')
-console.log(`nospoon web (API + bundled UI)  ${displayApiOrigin}`)
+console.log(`nospoon (API + bundled UI)  ${displayApiOrigin}`)
 if (host === '0.0.0.0' || host === '::') {
   console.log('  (listening on all interfaces; use the URL above from this machine)')
 }
@@ -161,7 +161,7 @@ const nospoonExitBeforeListen = new Promise((_, reject) => {
 function onEarlyNospoonExit (code, signal) {
   rejectEarlyExit(
     new Error(
-      `nospoon web exited before listening (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
+      `nospoon exited before listening (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
     )
   )
 }
@@ -184,5 +184,5 @@ const vite = spawn(process.execPath, [viteBin, '--config', 'web/vite.config.mjs'
 })
 children.push(vite)
 
-nospoon.on('exit', (code, signal) => onChildExit('nospoon web', code, signal))
+nospoon.on('exit', (code, signal) => onChildExit('nospoon', code, signal))
 vite.on('exit', (code, signal) => onChildExit('vite', code, signal))
