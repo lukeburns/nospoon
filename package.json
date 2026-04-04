@@ -53,6 +53,7 @@
     "lib/dns-mesh-name.js",
     "lib/dns-manual-registry.js",
     "lib/dns-loopback-aliases.js",
+    "lib/whois-auth-proxy.js",
     "lib/web.bundle.js",
     "lib/web.bundle.css",
     "lib/swarm-mesh.js",

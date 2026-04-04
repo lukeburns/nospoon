@@ -22,7 +22,13 @@ const emptyStatus = {
     forward: '1.1.1.1',
     lastError: null,
     manual: [],
-    loopback: { supported: false, aliases: [], error: null }
+    loopback: { supported: false, aliases: [], error: null },
+    whoisAuth: {
+      listening: false,
+      ipv4: null,
+      httpPort: 80,
+      lastError: null
+    }
   }
 }
 
@@ -793,6 +799,16 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
           {d.lastError ? (
             <p className="form-status err" role="alert">
               {d.lastError}
+            </p>
+          ) : null}
+          {d.whoisAuth &&
+          (d.whoisAuth.listening || d.whoisAuth.lastError) ? (
+            <p className="dim meta-tight">
+              Whois-only HTTP (port {d.whoisAuth.httpPort ?? 80})
+              {d.whoisAuth.listening && d.whoisAuth.ipv4
+                ? ` on ${d.whoisAuth.ipv4} — curl http://${d.whoisAuth.ipv4}/<z32-or-key.topic>`
+                : null}
+              {d.whoisAuth.lastError ? ` — ${d.whoisAuth.lastError}` : null}
             </p>
           ) : null}
           <label className="policy-toggle-row dns-toggle-spaced">
