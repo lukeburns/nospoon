@@ -29,7 +29,7 @@ function connectHost (bindHost) {
 }
 
 function parseDevArgs (argv) {
-  let port = 8790
+  let port = 80
   let host = '127.0.0.1'
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
@@ -102,7 +102,8 @@ const vitePort = port + 1
 const probeHost = connectHost(host)
 const displayUrlHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
 
-process.env.NOSPOON_WEB_PROXY_TARGET = `http://${probeHost}:${port}`
+process.env.NOSPOON_WEB_PROXY_TARGET =
+  port === 80 ? `http://${probeHost}` : `http://${probeHost}:${port}`
 process.env.NOSPOON_WEB_VITE_PORT = String(vitePort)
 process.env.NOSPOON_WEB_VITE_HOST = host
 
@@ -125,8 +126,10 @@ process.on('SIGTERM', () => {
   process.exit(0)
 })
 
+const displayApiOrigin =
+  port === 80 ? `http://${displayUrlHost}/` : `http://${displayUrlHost}:${port}/`
 console.log('')
-console.log(`nospoon web (API + bundled UI)  http://${displayUrlHost}:${port}/`)
+console.log(`nospoon web (API + bundled UI)  ${displayApiOrigin}`)
 if (host === '0.0.0.0' || host === '::') {
   console.log('  (listening on all interfaces; use the URL above from this machine)')
 }

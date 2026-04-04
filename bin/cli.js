@@ -68,7 +68,7 @@ function validateMtu (value) {
 }
 
 function parseWebFlags (args) {
-  const flags = { port: 8790, host: '127.0.0.1', primaryCidr: null }
+  const flags = { port: 80, primaryCidr: null }
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       const p = parseInt(args[++i], 10)
@@ -274,12 +274,11 @@ Swarm options:
   --mtu <num>           MTU (default: 1400)
 
 Web control (sudo for TUN when joining topics or peers):
-  --port <num>          HTTP port (default: 8790)
-  --host <addr>         Bind address (default: 127.0.0.1)
+  --port <num>          HTTP port (default: 80)
+  --host <addr>         Bind address (default: auto loopback alias; DNS name nospoon when mesh DNS is on)
   --primary-cidr <c>    Fixed primary (direct pool) IPv4 CIDR instead of auto 10.0.x.1/24
 
-  From the repo, \`npm run dev -- --port <n> [--host <addr>]\` runs this server on <n> (and Vite on <n+1>).
-  Use \`--host\` or \`--address\` for the bind address (default 127.0.0.1).
+  From the repo, \`npm run dev\` runs the control server plus Vite (see scripts/dev-web.mjs).
 
 Examples:
   # Authenticated mode (recommended)
@@ -317,16 +316,17 @@ async function main () {
   if (command === 'web' || command === 'control') {
     const { startControlHttpServer } = require('../lib/control-http')
     const flags = parseWebFlags(args.slice(1))
-    const { sessions, port, closeHttpServer } = await startControlHttpServer(flags)
-    const host = flags.host
-    const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host
-    console.log('')
-    console.log('nospoon control plane (HTTP)')
-    console.log(`  http://${displayHost}:${port}/`)
-    if (host === '0.0.0.0') {
-      console.log('  (listening on all interfaces)')
+    const opts = {
+      port: flags.port,
+      primaryCidr: flags.primaryCidr
     }
-    console.log('  Hot reload (repo): npm run dev -- --port ' + port + '  →  Vite on ' + (port + 1) + ' (or npm run dev:web for Vite alone)')
+    if (flags.host != null) opts.host = flags.host
+    const { sessions, closeHttpServer, controlPanelBaseUrl } =
+      await startControlHttpServer(opts)
+    const pk = sessions.getStatus().clientPublicKeyZ32
+    console.log('')
+    console.log(`running on: ${controlPanelBaseUrl}`)
+    console.log(`public key: ${pk}`)
     console.log('')
     let exiting = false
     function shutdown () {

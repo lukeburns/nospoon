@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const webRoot = dirname(fileURLToPath(import.meta.url))
 
 /** Control server from `nospoon web` (override with NOSPOON_WEB_PROXY_TARGET). */
-const proxyTarget = process.env.NOSPOON_WEB_PROXY_TARGET || 'http://127.0.0.1:8790'
+const proxyTarget = process.env.NOSPOON_WEB_PROXY_TARGET || 'http://127.0.0.1'
 
 const vitePortRaw = process.env.NOSPOON_WEB_VITE_PORT
 const vitePort = vitePortRaw ? parseInt(vitePortRaw, 10) : 5173
