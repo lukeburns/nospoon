@@ -323,11 +323,11 @@ async function runControlPlane (webArgv) {
     primaryCidr: flags.primaryCidr
   }
   if (flags.host != null) opts.host = flags.host
-  const { sessions, closeHttpServer, controlPanelBaseUrl, keyLinkUrl } =
+  const { sessions, closeHttpServer, controlPanelRunningOnDisplay, keyLinkDisplay } =
     await startControlHttpServer(opts)
   console.log('')
-  console.log(`running on: ${controlPanelBaseUrl}`)
-  console.log(`key link: ${keyLinkUrl}`)
+  console.log(`running on: ${controlPanelRunningOnDisplay}`)
+  console.log(`key link: ${keyLinkDisplay}`)
   console.log('')
   let exiting = false
   function shutdown () {
