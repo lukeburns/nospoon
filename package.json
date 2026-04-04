@@ -44,6 +44,7 @@
     "lib/full-tunnel-darwin.js",
     "lib/routing-policy.js",
     "lib/routing.js",
+    "lib/shared-swarm-inbound.js",
     "lib/server.js",
     "lib/mesh-identifier.js",
     "lib/mesh-ip-reservations.js",
