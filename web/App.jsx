@@ -16,12 +16,13 @@ const emptyStatus = {
   dns: {
     enabled: false,
     listening: false,
-    port: 5343,
+    port: 53,
     address: '127.0.0.1',
     forwardEnabled: true,
     forward: '1.1.1.1',
     lastError: null,
-    manual: []
+    manual: [],
+    loopback: { supported: false, aliases: [], error: null }
   }
 }
 
@@ -583,17 +584,22 @@ function PrimaryInterfaceCard ({
 
 function DnsInterfaceCard ({ dns, onPatchDns }) {
   const d = dns || {}
-  const [portStr, setPortStr] = useState(String(d.port ?? 5343))
+  const [portStr, setPortStr] = useState(String(d.port ?? 53))
   const [addrStr, setAddrStr] = useState(d.address || '127.0.0.1')
   const [fwdStr, setFwdStr] = useState(d.forward || '1.1.1.1')
   const [fwdEn, setFwdEn] = useState(d.forwardEnabled !== false)
   const [applyBusy, setApplyBusy] = useState(false)
   const [manualMsg, setManualMsg] = useState(null)
+  const [loopbackMsg, setLoopbackMsg] = useState(null)
+  const [loopbackRefreshBusy, setLoopbackRefreshBusy] = useState(false)
+  const [loopbackAddBusy, setLoopbackAddBusy] = useState(false)
+
+  const lb = d.loopback || { supported: false, aliases: [], error: null }
 
   useEffect(
     function () {
       if (!dns) return
-      setPortStr(String(dns.port ?? 5343))
+      setPortStr(String(dns.port ?? 53))
       setAddrStr(dns.address || '127.0.0.1')
       setFwdStr(dns.forward || '1.1.1.1')
       setFwdEn(dns.forwardEnabled !== false)
@@ -651,10 +657,6 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
       const ipv4 = String(fd.get('dnsIpv4') || '').trim()
       const ipv6 = String(fd.get('dnsIpv6') || '').trim()
       if (!hostname) return
-      if (!ipv4 && !ipv6) {
-        setManualMsg({ kind: 'err', text: 'Provide ipv4 and/or ipv6' })
-        return
-      }
       fetch('/api/dns/manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -667,9 +669,15 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
         .then(function (r) {
           return readJson(r)
         })
-        .then(function () {
+        .then(function (j) {
           form.reset()
-          setManualMsg({ kind: 'ok', text: 'Manual record added.' })
+          const alloc = j && j.allocatedLoopbackIpv4 ? String(j.allocatedLoopbackIpv4) : ''
+          setManualMsg({
+            kind: 'ok',
+            text: alloc
+              ? `Manual record added (loopback ${alloc}).`
+              : 'Manual record added.'
+          })
           window.setTimeout(function () {
             setManualMsg(null)
           }, 2200)
@@ -688,6 +696,72 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
       })
       .catch(function (err) {
         setManualMsg({ kind: 'err', text: err.message || String(err) })
+      })
+  }, [])
+
+  const refreshLoopback = useCallback(function () {
+    setLoopbackRefreshBusy(true)
+    setLoopbackMsg(null)
+    fetch('/api/dns/loopback')
+      .then(function (r) {
+        return readJson(r)
+      })
+      .then(function () {
+        setLoopbackMsg({ kind: 'ok', text: 'Loopback list refreshed.' })
+        window.setTimeout(function () {
+          setLoopbackMsg(null)
+        }, 1800)
+      })
+      .catch(function (err) {
+        setLoopbackMsg({ kind: 'err', text: err.message || String(err) })
+      })
+      .finally(function () {
+        setLoopbackRefreshBusy(false)
+      })
+  }, [])
+
+  const onLoopbackAdd = useCallback(function (e) {
+    e.preventDefault()
+    const form = e.currentTarget
+    const fd = new FormData(form)
+    const ipv4 = String(fd.get('loopIpv4') || '').trim()
+    setLoopbackAddBusy(true)
+    setLoopbackMsg(null)
+    fetch('/api/dns/loopback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ipv4 ? { ipv4 } : {})
+    })
+      .then(function (r) {
+        return readJson(r)
+      })
+      .then(function (j) {
+        form.reset()
+        const added = j && j.addedIpv4 ? String(j.addedIpv4) : ''
+        setLoopbackMsg({
+          kind: 'ok',
+          text: added ? `Loopback alias added (${added}).` : 'Loopback alias added.'
+        })
+        window.setTimeout(function () {
+          setLoopbackMsg(null)
+        }, 2200)
+      })
+      .catch(function (err) {
+        setLoopbackMsg({ kind: 'err', text: err.message || String(err) })
+      })
+      .finally(function () {
+        setLoopbackAddBusy(false)
+      })
+  }, [])
+
+  const removeLoopback = useCallback(function (ip) {
+    setLoopbackMsg(null)
+    fetch('/api/dns/loopback/' + encodeURIComponent(ip), { method: 'DELETE' })
+      .then(function (r) {
+        return readJson(r)
+      })
+      .catch(function (err) {
+        setLoopbackMsg({ kind: 'err', text: err.message || String(err) })
       })
   }, [])
 
@@ -784,7 +858,85 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
             </button>
           </form>
           <FormStatus kind={manualMsg?.kind} text={manualMsg?.text} />
+          <div className="dns-loopback-section">
+            <p className="policy-group-head">Loopback reservation</p>
+            <p className="policy-blurb dim meta-tight">
+              Add another IPv4 on loopback so you can bind a service (e.g. HTTP on port 80) on that
+              address without using <code>127.0.0.1</code>. Add a manual hostname below pointing at
+              the same IP so this DNS server answers for it.
+            </p>
+            {!lb.supported ? (
+              <p className="dim meta-tight">Loopback alias control is only available on macOS and Linux.</p>
+            ) : (
+              <>
+                {lb.error ? (
+                  <p className="form-status err" role="alert">
+                    {lb.error}
+                  </p>
+                ) : null}
+                <div className="dns-loopback-toolbar">
+                  <button
+                    type="button"
+                    className="small"
+                    disabled={loopbackRefreshBusy}
+                    onClick={refreshLoopback}
+                  >
+                    {loopbackRefreshBusy ? 'Refreshing…' : 'Refresh list'}
+                  </button>
+                </div>
+                <FormStatus kind={loopbackMsg?.kind} text={loopbackMsg?.text} />
+                <form className="dns-loopback-form" onSubmit={onLoopbackAdd}>
+                  <label>
+                    IPv4 (optional)
+                    <input
+                      name="loopIpv4"
+                      placeholder="auto from 10.254.0.0/16"
+                      autoComplete="off"
+                      disabled={loopbackAddBusy}
+                    />
+                  </label>
+                  <button type="submit" disabled={loopbackAddBusy}>
+                    {loopbackAddBusy ? 'Adding…' : 'Add alias'}
+                  </button>
+                </form>
+                {lb.aliases.length === 0 ? (
+                  <p className="dim meta-tight">(no extra loopback IPv4)</p>
+                ) : (
+                  lb.aliases.map(function (ip) {
+                    return (
+                      <div key={ip} className="row dns-loopback-row">
+                        <div className="peer-row-head">
+                          <span>
+                            <IpLink ip={ip} />
+                          </span>
+                          <button
+                            type="button"
+                            className="small"
+                            onClick={function () {
+                              removeLoopback(ip)
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+                <p className="dim meta-tight dns-loopback-foot">
+                  Leave IPv4 empty to pick the first unused address in <code>10.254.0.0/16</code>{' '}
+                  (skips addresses in use on any interface). Otherwise use private IPv4 or{' '}
+                  <code>127.0.0.0/8</code> except <code>127.0.0.1</code>. Runs <code>ifconfig</code>{' '}
+                  (macOS) or <code>ip</code> (Linux); typically requires root.
+                </p>
+              </>
+            )}
+          </div>
           <p className="policy-group-head dns-manual-head">Manual hostnames</p>
+          <p className="policy-blurb dim meta-tight">
+            With no IPv4 and no IPv6, a loopback alias is allocated (same rules as above) and used
+            as the A record.
+          </p>
           <form className="dns-manual-form" onSubmit={onManualSubmit}>
             <label>
               Hostname
@@ -792,11 +944,11 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
             </label>
             <label>
               IPv4
-              <input name="dnsIpv4" placeholder="10.0.0.50" autoComplete="off" />
+              <input name="dnsIpv4" placeholder="optional" autoComplete="off" />
             </label>
             <label>
               IPv6
-              <input name="dnsIpv6" placeholder="fd00::1" autoComplete="off" />
+              <input name="dnsIpv6" placeholder="optional" autoComplete="off" />
             </label>
             <button type="submit">Add</button>
           </form>

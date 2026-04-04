@@ -349,8 +349,26 @@ button.small {
   cursor: default;
 }
 .dns-settings-form,
-.dns-manual-form {
+.dns-manual-form,
+.dns-loopback-form {
   margin: 0.5rem 0;
+}
+.dns-loopback-toolbar {
+  margin: 0.35rem 0 0.15rem;
+}
+.dns-loopback-foot {
+  margin-top: 0.45rem;
+}
+.dns-loopback-foot code {
+  font-size: 10px;
+}
+.dns-loopback-section {
+  margin-top: 0.65rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--line);
+}
+.dns-loopback-section .policy-group-head {
+  margin-top: 0.35rem;
 }
 .dns-manual-head {
   margin-top: 0.75rem;
