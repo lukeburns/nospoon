@@ -15,7 +15,7 @@
     "server": "node bin/cli.js server",
     "client": "node bin/cli.js client",
     "test": "node --test test/*.test.js",
-    "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify",
+    "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify && esbuild web/browser-net-shim.js --bundle --outfile=lib/browser-net-shim.bundle.js --format=esm --platform=browser --minify",
     "dev": "node scripts/dev-web.mjs",
     "dev:web": "vite --config web/vite.config.mjs"
   },
@@ -54,7 +54,10 @@
     "lib/dns-manual-registry.js",
     "lib/dns-loopback-aliases.js",
     "lib/whois-auth-proxy.js",
+    "lib/browser-net-proxy.js",
+    "lib/browser-net-tcp.js",
     "lib/spoon-hello-server.js",
+    "lib/browser-net-shim.bundle.js",
     "lib/web.bundle.js",
     "lib/web.bundle.css",
     "lib/swarm-mesh.js",
@@ -74,6 +77,7 @@
     "koffi": "^2.15.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "ws": "^8.20.0",
     "z32": "^1.1.0"
   },
   "devDependencies": {

@@ -10,3 +10,9 @@ What we fixed in practice: mirroring `router.addPeer` was necessary but not suff
 - Or keep N routers but drive them from a single “bind stream for key” primitive that always does `router.addPeer` **and** the right `ka.register` for each mesh context, with one close path.
 
 Until then, the duplication (sync calls in control-http + mesh/direct helpers) is the honest expression of “one wire, many logical interfaces.”
+
+## Browser `net` (WebSocket proxy)
+
+**Done (incremental):** `lib/browser-net-proxy.js` terminates TCP for registered `(local mesh IPv4, port)` and multiplexes over `/api/browser-net`. The shim in `web/browser-net-shim.js` exposes `BrowserNetServer`, optional `setBrowserNetProxy({ hostname, port })` for the WS URL (same *idea* as [net-browserify](https://github.com/emersion/net-browserify)), and `listen({ port, host })` where `host` is primary by default or a local mesh IP / mesh DNS name for this key.
+
+**TODO:** A true **`net` polyfill** (Browserify/Webpack alias): `net.connect` to mesh destinations, `createServer` wrapping the same protocol, `Socket`/`Server` parity with Node enough for existing apps — not only `BrowserNetServer`.
