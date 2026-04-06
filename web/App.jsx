@@ -612,6 +612,7 @@ function PrimaryInterfaceCard ({
 function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
   const i = ipfs || emptyStatus.dns.ipfsDweb
   const uploadInputRef = useRef(null)
+  const uploadDirInputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
   const [uploadBusy, setUploadBusy] = useState(false)
@@ -752,6 +753,62 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     [onApplied, loadSeeds]
   )
 
+  const uploadDirectory = useCallback(
+    function (e) {
+      e.preventDefault()
+      const input = uploadDirInputRef.current
+      const files = input && input.files
+      if (!files || !files.length) {
+        setMsg({ kind: 'err', text: 'Choose a folder with at least one file.' })
+        return
+      }
+      setUploadBusy(true)
+      setMsg(null)
+      const fd = new FormData()
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        const rel = f.webkitRelativePath || f.name
+        // Use the path as the field name — browsers often send filename="index.html" for
+        // every part, so the third append() arg does not produce unique multipart filenames.
+        fd.append(rel, f, f.name)
+      }
+      fetch('/api/ipfs/add-directory', {
+        method: 'POST',
+        body: fd
+      })
+        .then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error(j.error || String(r.status))
+            return j
+          })
+        })
+        .then(function () {
+          if (input) input.value = ''
+          loadSeeds()
+          return fetch('/api/ipfs').then(function (r) {
+            return r.json()
+          })
+        })
+        .then(function (st) {
+          if (typeof onApplied === 'function') onApplied(st)
+          setMsg({
+            kind: 'ok',
+            text: 'Folder stored in local Helia; relative paths are preserved under the pinned root.'
+          })
+          window.setTimeout(function () {
+            setMsg(null)
+          }, 3800)
+        })
+        .catch(function (err) {
+          setMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setUploadBusy(false)
+        })
+    },
+    [onApplied, loadSeeds]
+  )
+
   const unseed = useCallback(
     function (cid) {
       setUnseedingCid(cid)
@@ -872,15 +929,32 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               Start the gateway (enable IPFS + DNS above); when Helia is ready, upload unlocks.
             </p>
           ) : (
-            <form className="ipfs-upload-form" onSubmit={uploadFile}>
-              <label className="ipfs-upload-label">
-                <span className="dim">File</span>
-                <input ref={uploadInputRef} type="file" disabled={uploadBusy} />
-              </label>
-              <button type="submit" disabled={uploadBusy}>
-                {uploadBusy ? 'Uploading…' : 'Upload'}
-              </button>
-            </form>
+            <>
+              <form className="ipfs-upload-form" onSubmit={uploadFile}>
+                <label className="ipfs-upload-label">
+                  <span className="dim">File</span>
+                  <input ref={uploadInputRef} type="file" disabled={uploadBusy} />
+                </label>
+                <button type="submit" disabled={uploadBusy}>
+                  {uploadBusy ? 'Uploading…' : 'Upload'}
+                </button>
+              </form>
+              <form className="ipfs-upload-form ipfs-upload-form-dir" onSubmit={uploadDirectory}>
+                <label className="ipfs-upload-label">
+                  <span className="dim">Folder</span>
+                  <input
+                    ref={uploadDirInputRef}
+                    type="file"
+                    disabled={uploadBusy}
+                    multiple
+                    webkitdirectory=""
+                  />
+                </label>
+                <button type="submit" disabled={uploadBusy}>
+                  {uploadBusy ? 'Uploading…' : 'Upload folder'}
+                </button>
+              </form>
+            </>
           )}
           {i.mode === 'helia' && i.canUpload ? (
             <div className="ipfs-seeds-block">
@@ -892,7 +966,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   {seedsErr}
                 </p>
               ) : seeds.length === 0 ? (
-                <p className="dim meta-tight">No pinned roots yet. Upload a file above to seed it.</p>
+                <p className="dim meta-tight">No pinned roots yet. Upload a file or folder above to seed it.</p>
               ) : (
                 <ul className="ipfs-recent-adds ipfs-seeds-list">
                   {seeds.map(function (row) {

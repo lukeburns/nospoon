@@ -97,6 +97,7 @@
   "dependencies": {
     "@helia/unixfs": "^6.0.4",
     "blockstore-fs": "^2.0.5",
+    "busboy": "^1.6.0",
     "datastore-fs": "^11.0.2",
     "dns-packet": "^5.6.1",
     "helia": "^6.0.22",

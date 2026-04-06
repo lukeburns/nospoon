@@ -40,10 +40,11 @@ const BIN_TAG = 0x01
  * @typedef {object} BrowserNetMiddlewareOptions
  * @property {function(Buffer): Buffer} frameIpv4ForPeerStream
  * @property {function(Buffer, InboundPacketCtx): boolean} [shouldAcceptInboundPacket]
- * @property {function(): string | null | undefined} getDefaultListenIpv4
- * @property {function(string): string | null | undefined} [resolveListenHost]
- * @property {function(string): string | null | undefined} [resolveConnectHost] — non-IPv4 `connect` host
- * @property {function(string): OutboundRoute | null | undefined} [getOutboundRoute] — required for `connect` op
+ * @property {function(import('ws')|undefined): string | null | undefined} getDefaultListenIpv4 — per-socket default bind (`ws` omitted in status snapshots)
+ * @property {function(string, import('ws')|undefined): string | null | undefined} [resolveListenHost]
+ * @property {function(string, import('ws')|undefined): string | null | undefined} [resolveConnectHost] — non-IPv4 `connect` host
+ * @property {function(string, import('ws')|undefined): OutboundRoute | null | undefined} [getOutboundRoute] — required for `connect` op
+ * @property {function(import('ws'), import('http').IncomingMessage): (void|Promise<void>)} [prepareWebSocket] — runs before JSON/binary handlers (e.g. Origin policy + topic join)
  * @property {string} [webSocketPath]
  * @property {{ defaultListenNotReady?: string, unknownListenHost?: string }} [messages]
  */
@@ -63,6 +64,8 @@ function createBrowserNetMiddleware (opts) {
   const getDefaultListenIpv4 = opts.getDefaultListenIpv4
   const resolveListenHost =
     typeof opts.resolveListenHost === 'function' ? opts.resolveListenHost : null
+  const prepareWebSocket =
+    typeof opts.prepareWebSocket === 'function' ? opts.prepareWebSocket : null
   const resolveConnectHost =
     typeof opts.resolveConnectHost === 'function' ? opts.resolveConnectHost : null
   const getOutboundRoute =
@@ -444,7 +447,11 @@ function createBrowserNetMiddleware (opts) {
     }
   }
 
-  function attachWebSocketConnection (ws) {
+  /**
+   * @param {import('ws')} ws
+   * @param {import('http').IncomingMessage} [_req]
+   */
+  function attachWebSocketConnection (ws, _req) {
     ws._browserNetClientId = crypto.randomBytes(4).toString('hex')
     ws.on('message', function (data, isBinary) {
       if (isBinary && Buffer.isBuffer(data)) {
@@ -504,7 +511,7 @@ function createBrowserNetMiddleware (opts) {
         }
         let remoteIp = ipv4Literal(hostRaw)
         if (!remoteIp && resolveConnectHost) {
-          remoteIp = resolveConnectHost(hostRaw) || null
+          remoteIp = resolveConnectHost(hostRaw, ws) || null
         }
         if (!remoteIp) {
           try {
@@ -518,7 +525,7 @@ function createBrowserNetMiddleware (opts) {
           } catch (_) {}
           return
         }
-        const route = getOutboundRoute(remoteIp)
+        const route = getOutboundRoute(remoteIp, ws)
         if (!route || typeof route.writeFramed !== 'function') {
           try {
             ws.send(
@@ -531,7 +538,7 @@ function createBrowserNetMiddleware (opts) {
           } catch (_) {}
           return
         }
-        const primary = getDefaultListenIpv4()
+        const primary = getDefaultListenIpv4(ws)
         const rawLocal =
           msg.localHost != null && String(msg.localHost).trim() !== ''
             ? String(msg.localHost).trim()
@@ -540,7 +547,7 @@ function createBrowserNetMiddleware (opts) {
         if (rawLocal == null) {
           localIp = primary || null
         } else if (resolveListenHost) {
-          localIp = resolveListenHost(rawLocal) || ipv4Literal(rawLocal)
+          localIp = resolveListenHost(rawLocal, ws) || ipv4Literal(rawLocal)
         } else {
           localIp = ipv4Literal(rawLocal)
           if (localIp && primary && localIp !== primary) localIp = null
@@ -605,7 +612,7 @@ function createBrowserNetMiddleware (opts) {
       if (op === 'listen') {
         const port = Number(msg.port)
         const rid = msg.rid
-        const primary = getDefaultListenIpv4()
+        const primary = getDefaultListenIpv4(ws)
         if (!Number.isFinite(port) || port < 1 || port > 65535) {
           try {
             ws.send(
@@ -638,7 +645,7 @@ function createBrowserNetMiddleware (opts) {
             return
           }
         } else if (resolveListenHost) {
-          bindIp = resolveListenHost(rawHost) || null
+          bindIp = resolveListenHost(rawHost, ws) || null
         } else {
           bindIp = primary && rawHost === primary ? primary : null
         }
@@ -677,7 +684,7 @@ function createBrowserNetMiddleware (opts) {
       }
       if (op === 'unlisten') {
         const port = Number(msg.port)
-        const primary = getDefaultListenIpv4()
+        const primary = getDefaultListenIpv4(ws)
         const rawHost =
           msg.host != null && String(msg.host).trim() !== ''
             ? String(msg.host).trim()
@@ -686,7 +693,7 @@ function createBrowserNetMiddleware (opts) {
         if (rawHost == null) {
           bindIp = primary || ''
         } else if (resolveListenHost) {
-          bindIp = resolveListenHost(rawHost) || ''
+          bindIp = resolveListenHost(rawHost, ws) || ''
         } else {
           bindIp = primary && rawHost === primary ? primary : ''
         }
@@ -724,10 +731,22 @@ function createBrowserNetMiddleware (opts) {
       }
       if (path !== pathNorm) return
       wss.handleUpgrade(req, socket, head, function (ws) {
-        wss.emit('connection', ws, req)
+        function attach () {
+          attachWebSocketConnection(ws, req)
+        }
+        if (prepareWebSocket) {
+          Promise.resolve(prepareWebSocket(ws, req))
+            .then(attach)
+            .catch(function () {
+              try {
+                ws.close()
+              } catch (_) {}
+            })
+        } else {
+          attach()
+        }
       })
     })
-    wss.on('connection', attachWebSocketConnection)
     return wss
   }
 

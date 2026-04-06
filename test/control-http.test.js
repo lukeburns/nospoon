@@ -92,10 +92,18 @@ describe('control-http', function () {
       _peerPolicies: new Map()
     })
     const hex = m._clientKeyPair.publicKey.toString('hex')
-    const { formatMeshTopicDnsName } = require('../lib/dns-mesh-name')
+    const { formatMeshTopicDnsName, formatKeyToDnsName, normalizeFqdn } =
+      require('../lib/dns-mesh-name')
     const wire = formatMeshTopicDnsName(hex, 'spoon')
     assert.equal(m.resolveBrowserNetListenBind(wire), '10.2.2.1')
     assert.notEqual(m.resolveBrowserNetListenBind(wire), '10.0.88.1')
+    const wsRestricted = {
+      _browserNetOriginRestricted: true,
+      _browserNetOriginTopicRef: normalizeFqdn('spoon')
+    }
+    assert.equal(m.resolveBrowserNetListenBind(wire, wsRestricted), '10.2.2.1')
+    assert.equal(m.resolveBrowserNetListenBind(formatKeyToDnsName(hex), wsRestricted), null)
+    assert.equal(m.resolveBrowserNetListenBind(wire, undefined), '10.2.2.1')
     return m.destroy()
   })
 
@@ -104,10 +112,15 @@ describe('control-http', function () {
     m._meshIpReservations.setPrimaryCidr('10.0.77.1/24')
     const hex = m._clientKeyPair.publicKey.toString('hex')
     assert.equal(m.resolveBrowserNetConnectHost('10.0.77.2'), '10.0.77.2')
-    const { formatKeyToDnsName } = require('../lib/dns-mesh-name')
+    const { formatKeyToDnsName, normalizeFqdn } = require('../lib/dns-mesh-name')
     const name = formatKeyToDnsName(hex)
     assert.equal(m.resolveBrowserNetConnectHost(name), '10.0.77.1')
     assert.equal(m.resolveBrowserNetConnectHost('example.invalid'), null)
+    const wsRestricted = {
+      _browserNetOriginRestricted: true,
+      _browserNetOriginTopicRef: normalizeFqdn('spoon')
+    }
+    assert.equal(m.resolveBrowserNetConnectHost(name, wsRestricted), null)
     return m.destroy()
   })
 
