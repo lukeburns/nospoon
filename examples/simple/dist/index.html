@@ -17,12 +17,26 @@
       color: #e8e8e8;
       border-radius: 8px;
       font-size: 0.85rem;
-      white-space: pre-wrap;
-      word-break: break-word;
       min-height: 4rem;
       font-family: ui-monospace, monospace;
     }
-    pre#log { min-height: 6rem; }
+    pre#log {
+      min-height: 6rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #fromPeers {
+      display: flex;
+      flex-direction: column-reverse;
+      align-items: stretch;
+      gap: 0.35rem;
+      word-break: break-word;
+    }
+    .from-peers-line {
+      width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .peer-conn-line {
       color: #a8a8a8;
     }
@@ -54,6 +68,7 @@
       color: #e8e8e8;
       margin-top: 0.35rem;
       caret-color: #b4f0a8;
+      caret-animation: manual;
     }
     @supports (caret-shape: block) {
       textarea#toPeers {
@@ -84,8 +99,10 @@
   <p class="field-hint">Messages from connected clients.</p>
   <div id="fromPeers" aria-label="From peers"></div>
   
-  <span class="section-label">Log</span>
-  <pre id="log"></pre>
+  <div style="display: none;">
+    <span class="section-label">Log</span>
+    <pre id="log"></pre>
+  </div>
   <script>
 "use strict";
 (() => {
@@ -15678,12 +15695,6 @@
   var peerConnectedLineDone = /* @__PURE__ */ new WeakSet();
   var fromPeersNonEmpty = false;
   var fromPeersTailText = null;
-  function fromPeersBreakIfNeeded() {
-    const el = document.getElementById("fromPeers");
-    if (!el || !fromPeersNonEmpty) return;
-    el.appendChild(document.createElement("br"));
-    fromPeersTailText = null;
-  }
   function createPeerHostBracketSpan(fullLabel) {
     const wrap = document.createElement("span");
     wrap.className = "peer-tag";
@@ -15708,15 +15719,13 @@
   function fromPeersAppendConnectionStatus(fullLabel, status) {
     const el = document.getElementById("fromPeers");
     if (!el) return;
-    fromPeersBreakIfNeeded();
-    const row = document.createElement("span");
-    row.className = "peer-conn-line";
-    row.appendChild(createPeerHostBracketSpan(fullLabel));
-    row.appendChild(
+    const line = document.createElement("div");
+    line.className = "from-peers-line peer-conn-line";
+    line.appendChild(createPeerHostBracketSpan(fullLabel));
+    line.appendChild(
       document.createTextNode(status === "connected" ? "connected" : "disconnected")
     );
-    el.appendChild(row);
-    el.appendChild(document.createElement("br"));
+    el.appendChild(line);
     fromPeersTailText = null;
     fromPeersNonEmpty = true;
   }
@@ -15775,9 +15784,12 @@
   function fromPeersAppendLabel(fullLabel) {
     const el = document.getElementById("fromPeers");
     if (!el) return;
-    el.appendChild(createPeerHostBracketSpan(fullLabel));
+    const line = document.createElement("div");
+    line.className = "from-peers-line";
+    line.appendChild(createPeerHostBracketSpan(fullLabel));
     fromPeersTailText = document.createTextNode("");
-    el.appendChild(fromPeersTailText);
+    line.appendChild(fromPeersTailText);
+    el.appendChild(line);
     fromPeersNonEmpty = true;
   }
   function fromPeersAppendText(s) {
@@ -15785,8 +15797,11 @@
     const el = document.getElementById("fromPeers");
     if (!el) return;
     if (!fromPeersTailText) {
+      const line = document.createElement("div");
+      line.className = "from-peers-line";
       fromPeersTailText = document.createTextNode("");
-      el.appendChild(fromPeersTailText);
+      line.appendChild(fromPeersTailText);
+      el.appendChild(line);
     }
     fromPeersTailText.nodeValue += s;
     fromPeersNonEmpty = true;
@@ -15863,7 +15878,6 @@
         if (!labeledPeers.has(socket)) {
           if (!awaitingWhois.has(socket)) {
             awaitingWhois.set(socket, []);
-            fromPeersBreakIfNeeded();
             lastFromSock = socket;
             const ip = socket.remoteAddress;
             if (ip) {
@@ -15890,7 +15904,6 @@
           return;
         }
         if (lastFromSock !== socket) {
-          fromPeersBreakIfNeeded();
           fromPeersTailText = null;
           lastFromSock = socket;
         }

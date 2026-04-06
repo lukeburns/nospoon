@@ -4,9 +4,12 @@ const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
 const { ControlPlaneSessionManager } = require('../lib/control-http')
 
+/** Avoid reading or writing ~/.nospoon/identity.json during unit tests. */
+const ephemeral = { ephemeralClientKey: true }
+
 describe('control-http', function () {
   it('ControlPlaneSessionManager exposes stable client z32 before any sessions', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     const s = m.getStatus()
     assert.equal(typeof s.clientPublicKeyZ32, 'string')
     assert.ok(s.clientPublicKeyZ32.length > 8)
@@ -33,6 +36,7 @@ describe('control-http', function () {
 
   it('accepts primaryCidr override in constructor', function () {
     const m = new ControlPlaneSessionManager({
+      ...ephemeral,
       primaryCidr: '10.0.99.1/24'
     })
     assert.equal(m.getStatus().primaryCidrOverride, '10.0.99.1/24')
@@ -40,7 +44,7 @@ describe('control-http', function () {
   })
 
   it('whois returns null for unknown addresses and rejects bad keys', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     assert.equal(m.whoisIp(''), null)
     assert.equal(m.whoisIp('not-an-ip'), null)
     assert.equal(m.whoisIp('10.0.0.99'), null)
@@ -51,7 +55,7 @@ describe('control-http', function () {
   })
 
   it('dnsResolveMeshIpv4 resolves the local key to primary TUN host using reserved primary CIDR', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     m._meshIpReservations.setPrimaryCidr('10.0.77.1/24')
     const hex = m._clientKeyPair.publicKey.toString('hex')
     assert.equal(m.dnsResolveMeshIpv4({ kind: 'key', keyHex: hex }), '10.0.77.1')
@@ -59,7 +63,7 @@ describe('control-http', function () {
   })
 
   it('dnsResolveMeshIpv4 resolves local keyTopic to topic row localTunIp', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     const id = '00000000-0000-4000-8000-0000000000aa'
     m._topics.set(id, {
       id,
@@ -79,7 +83,7 @@ describe('control-http', function () {
   })
 
   it('resolveBrowserNetListenBind keeps z32.spoon as keyTopic (topic TUN), not primary', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     m._meshIpReservations.setPrimaryCidr('10.0.88.1/24')
     const topicId = '00000000-0000-4000-8000-0000000000cc'
     m._topics.set(topicId, {
@@ -108,7 +112,7 @@ describe('control-http', function () {
   })
 
   it('resolveBrowserNetConnectHost passes through IPv4 and resolves mesh DNS', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     m._meshIpReservations.setPrimaryCidr('10.0.77.1/24')
     const hex = m._clientKeyPair.publicKey.toString('hex')
     assert.equal(m.resolveBrowserNetConnectHost('10.0.77.2'), '10.0.77.2')
@@ -125,7 +129,7 @@ describe('control-http', function () {
   })
 
   it('getBrowserNetOutboundRoute returns null without an active relay connection', function () {
-    const m = new ControlPlaneSessionManager()
+    const m = new ControlPlaneSessionManager(ephemeral)
     assert.equal(m.getBrowserNetOutboundRoute('10.0.0.5'), null)
     return m.destroy()
   })
