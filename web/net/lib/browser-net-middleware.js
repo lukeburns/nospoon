@@ -255,7 +255,10 @@ function createBrowserNetMiddleware (opts) {
     let s = sessions.get(sk)
 
     if (s) {
-      if (!shouldAcceptInboundPacket(packet, ctx)) return false
+      // Source was validated when this session started (inbound bare SYN at open, or outbound
+      // connect’s first peer reply). Re-running shouldAccept on later segments (especially the
+      // client’s final ACK after our SYN-ACK) can spuriously fail and leave inbound sessions stuck
+      // in syn_rcvd with no `accept` to the browser.
 
       if (flags & FLAG_RST) {
         closeSession(sk, 'rst')

@@ -366,4 +366,142 @@ describe('browser-net-middleware (integration)', function () {
       })
     }
   })
+
+  it('listen: final ACK completes handshake even if shouldAccept only allows bare SYN', async function () {
+    /** @type {Buffer[]} */
+    const outboundFramed = []
+    const mw = createBrowserNetMiddleware({
+      frameIpv4ForPeerStream: function (b) {
+        return b
+      },
+      getDefaultListenIpv4: function () {
+        return LOCAL_IP
+      },
+      shouldAcceptInboundPacket: function (packet) {
+        const p = parseIpv4Tcp(packet)
+        return !!(p && (p.flags & FLAG_SYN) && !(p.flags & FLAG_ACK))
+      }
+    })
+
+    const server = http.createServer()
+    mw.attachToHttpServer(server)
+
+    await new Promise(function (resolve, reject) {
+      server.listen(0, '127.0.0.1', function (err) {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+    const addr = server.address()
+    assert.ok(addr && typeof addr === 'object')
+    const port = /** @type {import('net').AddressInfo} */ (addr).port
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/browser-net`)
+    const listenPort = 23
+    const peerIsn = 0xbeef0001 >>> 0
+    const peerSrcPort = 60892
+
+    try {
+      {
+        const raw = await sendAndReadFirstMessage(
+          ws,
+          JSON.stringify({ op: 'hello', v: 1 })
+        )
+        const hello = JSON.parse(
+          Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)
+        )
+        assert.equal(hello.op, 'hello_ok')
+      }
+
+      const listenRid = `lid-${Date.now()}`
+      const listenOkP = new Promise(function (resolve, reject) {
+        const t = setTimeout(function () {
+          reject(new Error('timeout listen_ok'))
+        }, 8000)
+        function onMsg (data) {
+          try {
+            const j = JSON.parse(
+              Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
+            )
+            if (j.op === 'listen_ok' && j.rid === listenRid) {
+              ws.removeListener('message', onMsg)
+              clearTimeout(t)
+              resolve(j)
+            }
+          } catch (_) {}
+        }
+        ws.on('message', onMsg)
+      })
+      ws.send(
+        JSON.stringify({ op: 'listen', port: listenPort, rid: listenRid })
+      )
+      await listenOkP
+
+      const acceptP = new Promise(function (resolve, reject) {
+        const t = setTimeout(function () {
+          reject(new Error('timeout waiting for accept'))
+        }, 8000)
+        ws.once('message', function (data) {
+          clearTimeout(t)
+          resolve(data)
+        })
+      })
+
+      const ctx = {
+        peerKeyHex: TEST_KEY,
+        peerAliasIp: REMOTE_IP,
+        writeFramed: function (buf) {
+          outboundFramed.push(Buffer.from(buf))
+        }
+      }
+
+      const synIn = buildIpv4TcpPacket({
+        srcIp: REMOTE_IP,
+        dstIp: LOCAL_IP,
+        srcPort: peerSrcPort,
+        dstPort: listenPort,
+        seq: peerIsn,
+        ack: 0,
+        flags: FLAG_SYN
+      })
+      mw.tryConsumeInboundPacket(synIn, ctx)
+      assert.equal(outboundFramed.length, 1)
+      const synAck = parseIpv4Tcp(outboundFramed[0])
+      assert.ok(synAck)
+      assert.ok(synAck.flags & FLAG_SYN)
+      assert.ok(synAck.flags & FLAG_ACK)
+
+      const ackIn = buildIpv4TcpPacket({
+        srcIp: REMOTE_IP,
+        dstIp: LOCAL_IP,
+        srcPort: peerSrcPort,
+        dstPort: listenPort,
+        seq: (peerIsn + 1) >>> 0,
+        ack: (synAck.seq + 1) >>> 0,
+        flags: FLAG_ACK
+      })
+      mw.tryConsumeInboundPacket(ackIn, ctx)
+
+      const rawAccept = await acceptP
+      const acc = JSON.parse(
+        Buffer.isBuffer(rawAccept)
+          ? rawAccept.toString('utf8')
+          : String(rawAccept)
+      )
+      assert.equal(acc.op, 'accept')
+      assert.equal(acc.local.ip, LOCAL_IP)
+      assert.equal(acc.local.port, listenPort)
+      assert.equal(acc.remote.ip, REMOTE_IP)
+      assert.equal(acc.remote.port, peerSrcPort)
+    } finally {
+      try {
+        ws.close()
+      } catch (_) {}
+      await new Promise(function (resolve) {
+        server.close(function () {
+          resolve()
+        })
+      })
+    }
+  })
 })
