@@ -435,8 +435,16 @@ export class Server extends EventEmitter {
 
   address () {
     if (!this._listening || this._port == null) return null
-    const address =
+    let address =
       typeof this._host === 'string' && this._host.length ? this._host : '0.0.0.0'
+    if (
+      address === '0.0.0.0' &&
+      typeof location !== 'undefined' &&
+      location.hostname &&
+      String(location.hostname).trim()
+    ) {
+      address = String(location.hostname).trim()
+    }
     return { port: this._port, family: 'IPv4', address }
   }
 

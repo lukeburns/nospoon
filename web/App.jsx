@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import z32 from 'z32'
 
 const emptyStatus = {
@@ -821,7 +821,9 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           })
         })
         .then(function () {
-          loadSeeds()
+          startTransition(function () {
+            loadSeeds()
+          })
           if (typeof onApplied === 'function') {
             return fetch('/api/ipfs').then(function (r) {
               return r.json()
@@ -830,7 +832,11 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           return null
         })
         .then(function (st) {
-          if (st && typeof onApplied === 'function') onApplied(st)
+          if (st && typeof onApplied === 'function') {
+            startTransition(function () {
+              onApplied(st)
+            })
+          }
         })
         .catch(function (err) {
           setMsg({ kind: 'err', text: err.message || String(err) })
@@ -981,7 +987,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                         <button
                           type="button"
                           className="small ipfs-unseed-btn"
-                          disabled={unseedingCid != null}
+                          disabled={unseedingCid === row.cid}
                           onClick={function () {
                             unseed(row.cid)
                           }}

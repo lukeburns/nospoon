@@ -299,4 +299,71 @@ describe('browser-net-middleware (integration)', function () {
       })
     }
   })
+
+  it('buffers client messages until async prepareWebSocket resolves', async function () {
+    const mw = createBrowserNetMiddleware({
+      frameIpv4ForPeerStream: function (b) {
+        return b
+      },
+      getDefaultListenIpv4: function () {
+        return LOCAL_IP
+      },
+      prepareWebSocket: async function () {
+        await new Promise(function (r) {
+          setImmediate(r)
+        })
+        await new Promise(function (r) {
+          setImmediate(r)
+        })
+      }
+    })
+
+    const server = http.createServer()
+    mw.attachToHttpServer(server)
+
+    await new Promise(function (resolve, reject) {
+      server.listen(0, '127.0.0.1', function (err) {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+    const addr = server.address()
+    assert.ok(addr && typeof addr === 'object')
+    const port = /** @type {import('net').AddressInfo} */ (addr).port
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/browser-net`)
+
+    try {
+      await new Promise(function (resolve, reject) {
+        ws.once('error', reject)
+        ws.once('open', function () {
+          ws.send(JSON.stringify({ op: 'hello', v: 1 }))
+          resolve()
+        })
+      })
+
+      const raw = await new Promise(function (resolve, reject) {
+        const t = setTimeout(function () {
+          reject(new Error('timeout waiting for hello_ok'))
+        }, 8000)
+        ws.once('message', function (data) {
+          clearTimeout(t)
+          resolve(data)
+        })
+      })
+      const hello = JSON.parse(
+        Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)
+      )
+      assert.equal(hello.op, 'hello_ok')
+    } finally {
+      try {
+        ws.close()
+      } catch (_) {}
+      await new Promise(function (resolve) {
+        server.close(function () {
+          resolve()
+        })
+      })
+    }
+  })
 })

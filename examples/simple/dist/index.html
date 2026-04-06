@@ -10,7 +10,7 @@
     code { background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 4px; }
     .section-label { display: block; font-weight: 600; margin-top: 1.25rem; }
     .field-hint { margin: 0.25rem 0 0.5rem; font-size: 0.9rem; color: #444; }
-    pre#fromPeers, pre#log {
+    pre#log, #fromPeers {
       margin-top: 0.35rem;
       padding: 0.75rem 1rem;
       background: #111;
@@ -20,47 +20,70 @@
       white-space: pre-wrap;
       word-break: break-word;
       min-height: 4rem;
+      font-family: ui-monospace, monospace;
     }
     pre#log { min-height: 6rem; }
+    .peer-conn-line {
+      color: #a8a8a8;
+    }
+    button.host-copy {
+      all: unset;
+      cursor: pointer;
+      color: #8ec5ff;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
+    button.host-copy:hover { color: #b8dbff; }
+    button.host-copy:focus-visible {
+      outline: 2px solid #8ec5ff;
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
     textarea#toPeers {
       width: 100%;
       max-width: 52rem;
       box-sizing: border-box;
       font-family: ui-monospace, monospace;
       font-size: 0.85rem;
-      padding: 0.5rem 0.65rem;
-      border-radius: 6px;
-      border: 1px solid #ccc;
+      line-height: 1.5;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #111;
+      color: #e8e8e8;
+      margin-top: 0.35rem;
+      caret-color: #b4f0a8;
+    }
+    @supports (caret-shape: block) {
+      textarea#toPeers {
+        caret-shape: block;
+      }
+    }
+    textarea#toPeers::placeholder {
+      color: #666;
+    }
+    textarea#toPeers:focus {
+      outline: none;
+      border-color: #8ec5ff;
+      box-shadow: 0 0 0 2px rgba(142, 197, 255, 0.25);
     }
     label { margin-right: 0.5rem; }
   </style>
 </head>
 <body>
-  <h1>Browser-net (netcat-style)</h1>
-  <p>
-    Same behavior as <code>examples/spoon-hello</code> BrowserNet panel: default port <strong>23</strong>,
-    bytes from mesh peers appear under &quot;From peers&quot; (tagged via <code>/api/whois/&lt;ip&gt;</code> when
-    <code>controlOrigin</code> or <code>proxyHost</code> points at control HTTP). The &quot;To peers&quot; box
-    broadcasts UTF-8 to every connected session; edits send DEL (0x7f) + inserts on the wire.
-    WebSocket defaults match spoon-hello: <code>ws://middle:8766/api/browser-net</code> unless you set
-    <code>?wsHost=…&amp;wsPort=…</code> or <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>
-    (mesh pages like <code>z32.bafy…</code> must use this default — not the page hostname).
-  </p>
-  <p>
-    <label>Bind host <input id="bindHost" type="text" size="52" placeholder="empty = primary mesh"/></label>
-  </p>
-  <p>
-    <label>Port <input id="listenPort" type="number" value="23" min="1" max="65535"/></label>
-  </p>
-  <p>
-    <button id="btnListen" type="button">Listen</button>
-    <button id="btnStop" type="button">Stop</button>
-  </p>
-  <span class="section-label">From peers</span>
-  <pre id="fromPeers"></pre>
-  <span class="section-label">To peers</span>
-  <p class="field-hint">Broadcast to every connected session.</p>
-  <textarea id="toPeers" rows="4" spellcheck="false" placeholder="Listening… type to send."></textarea>
+  <h1>TCP Server</h1>
+
+  <p id="listenStatus" class="field-hint" aria-live="polite">Starting server...</p>
+
+  <span class="section-label">Broadcast</span>
+  <p class="field-hint">Broadcast keystrokes to all connected clients.</p>
+  <textarea id="toPeers" rows="4" spellcheck="false" placeholder="Type to send."></textarea>
+
+  <span class="section-label">Messages</span>
+  <p class="field-hint">Messages from connected clients.</p>
+  <div id="fromPeers" aria-label="From peers"></div>
+  
   <span class="section-label">Log</span>
   <pre id="log"></pre>
   <script>
@@ -15457,7 +15480,10 @@
         }
         address() {
           if (!this._listening || this._port == null) return null;
-          const address = typeof this._host === "string" && this._host.length ? this._host : "0.0.0.0";
+          let address = typeof this._host === "string" && this._host.length ? this._host : "0.0.0.0";
+          if (address === "0.0.0.0" && typeof location !== "undefined" && location.hostname && String(location.hostname).trim()) {
+            address = String(location.hostname).trim();
+          }
           return { port: this._port, family: "IPv4", address };
         }
         /**
@@ -15497,10 +15523,81 @@
   var { setBrowserNetProxy: setBrowserNetProxy2 } = net2;
   var MIDDLE_WS_PORT = 8766;
   var NL = "\n";
-  var controlPanelOrigin = "";
+  var LISTEN_PORT_START = 23;
+  var LISTEN_PORT_TRIES = 500;
+  var ELL = "\u22EF";
+  var TRUNC_PREFIX = 3;
+  var TRUNC_SUFFIX = 3;
+  var TRUNC_MIN = 12;
+  function truncateLabel(seg) {
+    if (seg.length <= TRUNC_MIN) return seg;
+    return seg.slice(0, TRUNC_PREFIX) + ELL + seg.slice(-TRUNC_SUFFIX);
+  }
+  function truncateMeshDisplay(full) {
+    if (!full) return "";
+    if (!full.includes(".")) return truncateLabel(full);
+    return full.split(".").map(truncateLabel).join(".");
+  }
+  function shouldOfferCopyHost(full) {
+    if (!full) return false;
+    if (!full.includes(".")) return full.length > TRUNC_MIN;
+    return full.split(".").some(function(p) {
+      return p.length > TRUNC_MIN;
+    });
+  }
+  function copyTextToClipboard(text) {
+    try {
+      const clip = typeof navigator !== "undefined" ? navigator.clipboard : void 0;
+      if (clip && typeof clip.writeText === "function") {
+        return clip.writeText(text).catch(function() {
+          copyTextToClipboardExec(text);
+        });
+      }
+    } catch (_) {
+    }
+    copyTextToClipboardExec(text);
+    return Promise.resolve();
+  }
+  function copyTextToClipboardExec(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (_) {
+    }
+  }
+  function appendCopyableHostTo(parent, full) {
+    if (!parent || full == null) return;
+    const s = String(full);
+    if (!shouldOfferCopyHost(s)) {
+      parent.appendChild(document.createTextNode(s));
+      return;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "host-copy";
+    b.textContent = truncateMeshDisplay(s);
+    b.title = "Click to copy \u2014 " + s;
+    b.addEventListener("click", function(e) {
+      e.preventDefault();
+      void copyTextToClipboard(s);
+    });
+    parent.appendChild(b);
+  }
+  var whoisBase = "http://whois";
   function applyBrowserNetProxyFromLocation() {
     if (typeof window === "undefined" || !window.location) return;
     const u = new URL(window.location.href);
+    const whoisParam = u.searchParams.get("whoisOrigin");
+    if (whoisParam && whoisParam.trim()) {
+      whoisBase = whoisParam.trim().replace(/\/$/, "");
+    }
     const host = u.searchParams.get("proxyHost") || u.searchParams.get("controlHost") || "";
     const portStr = u.searchParams.get("proxyPort") || u.searchParams.get("controlPort") || "";
     if (host.trim()) {
@@ -15526,31 +15623,179 @@
         });
       }
     }
-    const explicit = u.searchParams.get("controlOrigin");
-    if (explicit && explicit.trim()) {
-      controlPanelOrigin = explicit.trim();
-      return;
-    }
-    if (host.trim()) {
-      const p = portStr ? Number(portStr) : 80;
-      controlPanelOrigin = `http://${host.trim()}:${p}`;
-      return;
-    }
-    if (u.protocol === "http:" || u.protocol === "https:") {
-      controlPanelOrigin = u.origin;
+  }
+  function whoisUrlForIp(ip) {
+    const base = whoisBase.endsWith("/") ? whoisBase.slice(0, -1) : whoisBase;
+    return `${base}/${encodeURIComponent(ip)}`;
+  }
+  function whoisUrlSelf() {
+    const base = whoisBase.endsWith("/") ? whoisBase.slice(0, -1) : whoisBase;
+    return base + "/";
+  }
+  function pageHostname() {
+    return typeof window !== "undefined" && window.location && window.location.hostname ? String(window.location.hostname).trim() : "";
+  }
+  async function resolveVirtualListenHost() {
+    const host = pageHostname();
+    if (!host) return null;
+    if (host.includes(".")) return host;
+    try {
+      const r = await fetch(whoisUrlSelf());
+      if (!r.ok) return null;
+      const line = (await r.text()).trim();
+      const z32 = line.split(/\r?\n/)[0].trim();
+      if (!z32) return null;
+      return z32 + "." + host;
+    } catch (_) {
+      return null;
     }
   }
-  function logLine(line) {
+  var cachedVirtualListenHost = null;
+  function logAppendPlain(line) {
     const el = document.getElementById("log");
-    if (el) el.textContent += String(line) + NL;
+    if (el) el.appendChild(document.createTextNode(String(line) + NL));
     if (typeof console !== "undefined" && console.log) console.log(line);
   }
-  var fromPeersText = "";
-  function setFromPeers(updater) {
-    if (typeof updater === "function") fromPeersText = updater(fromPeersText);
-    else fromPeersText = updater;
+  function logListeningLine(vh, port) {
+    const el = document.getElementById("log");
+    const line = "listening on " + vh + ":" + port;
+    if (el) {
+      el.appendChild(document.createTextNode("listening on "));
+      appendCopyableHostTo(el, vh);
+      el.appendChild(document.createTextNode(":" + port + NL));
+    }
+    if (typeof console !== "undefined" && console.log) console.log(line);
+  }
+  function setListenStatus(vh, port) {
+    const status = document.getElementById("listenStatus");
+    if (!status) return;
+    status.textContent = "";
+    status.appendChild(document.createTextNode("Listening on "));
+    appendCopyableHostTo(status, vh);
+    status.appendChild(document.createTextNode(":" + port));
+  }
+  var socketPeerLabel = /* @__PURE__ */ new WeakMap();
+  var peerConnectedLineDone = /* @__PURE__ */ new WeakSet();
+  var fromPeersNonEmpty = false;
+  var fromPeersTailText = null;
+  function fromPeersBreakIfNeeded() {
     const el = document.getElementById("fromPeers");
-    if (el) el.textContent = fromPeersText;
+    if (!el || !fromPeersNonEmpty) return;
+    el.appendChild(document.createElement("br"));
+    fromPeersTailText = null;
+  }
+  function createPeerHostBracketSpan(fullLabel) {
+    const wrap = document.createElement("span");
+    wrap.className = "peer-tag";
+    wrap.appendChild(document.createTextNode("["));
+    if (shouldOfferCopyHost(fullLabel)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "host-copy";
+      b.textContent = truncateMeshDisplay(fullLabel);
+      b.title = "Click to copy \u2014 " + fullLabel;
+      b.addEventListener("click", function(e) {
+        e.preventDefault();
+        void copyTextToClipboard(fullLabel);
+      });
+      wrap.appendChild(b);
+    } else {
+      wrap.appendChild(document.createTextNode(fullLabel));
+    }
+    wrap.appendChild(document.createTextNode("] "));
+    return wrap;
+  }
+  function fromPeersAppendConnectionStatus(fullLabel, status) {
+    const el = document.getElementById("fromPeers");
+    if (!el) return;
+    fromPeersBreakIfNeeded();
+    const row = document.createElement("span");
+    row.className = "peer-conn-line";
+    row.appendChild(createPeerHostBracketSpan(fullLabel));
+    row.appendChild(
+      document.createTextNode(status === "connected" ? "connected" : "disconnected")
+    );
+    el.appendChild(row);
+    el.appendChild(document.createElement("br"));
+    fromPeersTailText = null;
+    fromPeersNonEmpty = true;
+  }
+  function rememberPeerLabel(socket, label) {
+    if (label != null && String(label) !== "") {
+      socketPeerLabel.set(socket, String(label));
+    }
+  }
+  function tryAppendPeerConnected(socket) {
+    if (peerConnectedLineDone.has(socket)) return;
+    const label = socketPeerLabel.get(socket);
+    if (label == null) return;
+    peerConnectedLineDone.add(socket);
+    fromPeersAppendConnectionStatus(label, "connected");
+  }
+  function announcePeerSessionOpen(socket) {
+    const ip = socket.remoteAddress;
+    const rp = socket.remotePort;
+    if (!ip) {
+      rememberPeerLabel(socket, "?");
+      tryAppendPeerConnected(socket);
+      if (typeof console !== "undefined" && console.log) {
+        console.log("[session] open ?");
+      }
+      return;
+    }
+    fetch(whoisUrlForIp(ip)).then(function(r) {
+      return r.ok ? r.text() : "";
+    }).then(function(raw) {
+      if (!activeSocks.has(socket)) return;
+      const label = raw && raw.trim() || `${ip}:${rp}`;
+      rememberPeerLabel(socket, label);
+      tryAppendPeerConnected(socket);
+      if (typeof console !== "undefined" && console.log) {
+        console.log("[session] open", label);
+      }
+    }).catch(function() {
+      if (!activeSocks.has(socket)) return;
+      const label = `${ip}:${rp}`;
+      rememberPeerLabel(socket, label);
+      tryAppendPeerConnected(socket);
+      if (typeof console !== "undefined" && console.log) {
+        console.log("[session] open", label);
+      }
+    });
+  }
+  function announcePeerSessionClose(socket) {
+    const ip = socket.remoteAddress;
+    const rp = socket.remotePort;
+    const label = socketPeerLabel.get(socket) || (ip != null ? `${ip}:${rp != null ? rp : "?"}` : "?");
+    fromPeersAppendConnectionStatus(label, "disconnected");
+    if (typeof console !== "undefined" && console.log) {
+      console.log("[session] close", label);
+    }
+  }
+  function fromPeersAppendLabel(fullLabel) {
+    const el = document.getElementById("fromPeers");
+    if (!el) return;
+    el.appendChild(createPeerHostBracketSpan(fullLabel));
+    fromPeersTailText = document.createTextNode("");
+    el.appendChild(fromPeersTailText);
+    fromPeersNonEmpty = true;
+  }
+  function fromPeersAppendText(s) {
+    if (s == null || s === "") return;
+    const el = document.getElementById("fromPeers");
+    if (!el) return;
+    if (!fromPeersTailText) {
+      fromPeersTailText = document.createTextNode("");
+      el.appendChild(fromPeersTailText);
+    }
+    fromPeersTailText.nodeValue += s;
+    fromPeersNonEmpty = true;
+  }
+  function resetFromPeersDom() {
+    const el = document.getElementById("fromPeers");
+    if (el) el.innerHTML = "";
+    fromPeersNonEmpty = false;
+    fromPeersTailText = null;
   }
   applyBrowserNetProxyFromLocation();
   var server = null;
@@ -15568,41 +15813,34 @@
       }
     }
   }
-  function delBytesForString(removedJs) {
-    const enc = new TextEncoder();
-    const n = enc.encode(removedJs).byteLength;
-    if (!n) return;
-    const u = new Uint8Array(n);
-    u.fill(127);
-    broadcastBytes(u);
+  function toPeersIsAppendOnly(prev, next) {
+    return next.length >= prev.length && next.slice(0, prev.length) === prev;
+  }
+  function onToPeersBeforeInput(e) {
+    const t = e.inputType;
+    if (t === "deleteContentBackward" || t === "deleteContentForward" || t === "deleteByCut" || t === "deleteByDrag" || t === "historyUndo" || t === "historyRedo") {
+      e.preventDefault();
+    }
   }
   function onToPeersInput(v) {
     const ta = document.getElementById("toPeers");
-    if (ta) ta.value = v;
+    if (!ta) return;
     const prev = lastToPeersValue;
+    if (!toPeersIsAppendOnly(prev, v)) {
+      ta.value = prev;
+      const len = prev.length;
+      ta.setSelectionRange(len, len);
+      return;
+    }
     if (v === prev) return;
     if (server && activeSocks.size > 0) {
-      let p = 0;
-      const min = Math.min(v.length, prev.length);
-      while (p < min && v.charCodeAt(p) === prev.charCodeAt(p)) p++;
-      const del = prev.slice(p);
-      const ins = v.slice(p);
-      if (del.length) delBytesForString(del);
+      const ins = v.slice(prev.length);
       if (ins.length) broadcastBytes(new TextEncoder().encode(ins));
     }
     lastToPeersValue = v;
   }
-  async function startListen() {
-    if (server) {
-      logLine("already listening \u2014 stop first");
-      return;
-    }
-    const portEl = document.getElementById("listenPort");
-    const bindEl = document.getElementById("bindHost");
-    const port = Number(portEl && portEl.value) || 23;
-    const bindHost = bindEl && bindEl.value ? String(bindEl.value).trim() : "";
-    const o = controlPanelOrigin.indexOf("://") !== -1 ? controlPanelOrigin : controlPanelOrigin ? `http://${controlPanelOrigin}` : "";
-    const srv = net2.createServer(function(socket) {
+  function createPeerServer() {
+    return net2.createServer(function(socket) {
       activeSocks.add(socket);
       peerDec.set(socket, new TextDecoder("utf-8", { fatal: false }));
       socket.on("data", function(chunk) {
@@ -15612,29 +15850,25 @@
           if (!pending) return;
           awaitingWhois.delete(socket);
           labeledPeers.add(socket);
-          setFromPeers(function(prev) {
-            let next = prev + `[${label}] `;
-            const dec2 = peerDec.get(socket);
-            for (let i = 0; i < pending.length; i++) {
-              next += dec2.decode(pending[i], { stream: true });
-            }
-            return next;
-          });
+          rememberPeerLabel(socket, label);
+          tryAppendPeerConnected(socket);
+          fromPeersAppendLabel(label);
+          const dec2 = peerDec.get(socket);
+          let chunk2 = "";
+          for (let i = 0; i < pending.length; i++) {
+            chunk2 += dec2.decode(pending[i], { stream: true });
+          }
+          fromPeersAppendText(chunk2);
         }
         if (!labeledPeers.has(socket)) {
           if (!awaitingWhois.has(socket)) {
             awaitingWhois.set(socket, []);
-            setFromPeers(function(prev) {
-              return prev.length ? prev + NL : prev;
-            });
+            fromPeersBreakIfNeeded();
             lastFromSock = socket;
             const ip = socket.remoteAddress;
-            if (o && ip) {
-              const whoisUrl = new URL(
-                `/api/whois/${encodeURIComponent(ip)}`,
-                o
-              ).href;
-              fetch(whoisUrl).then(function(r) {
+            if (ip) {
+              const url = whoisUrlForIp(ip);
+              fetch(url).then(function(r) {
                 return r.ok ? r.text() : "";
               }).then(function(raw) {
                 if (!activeSocks.has(socket)) return;
@@ -15648,77 +15882,119 @@
             }
           }
           awaitingWhois.get(socket).push(u8);
-          if (!labeledPeers.has(socket) && !(o && socket.remoteAddress)) {
-            flushPending(`${socket.remoteAddress}:${socket.remotePort}`);
+          if (!labeledPeers.has(socket) && !socket.remoteAddress) {
+            flushPending(
+              `${socket.remoteAddress || "?"}:${socket.remotePort || "?"}`
+            );
           }
           return;
         }
         if (lastFromSock !== socket) {
-          setFromPeers(function(prev) {
-            return prev.length ? prev + NL : prev;
-          });
+          fromPeersBreakIfNeeded();
+          fromPeersTailText = null;
           lastFromSock = socket;
         }
         const dec = peerDec.get(socket);
-        setFromPeers(function(prev) {
-          return prev + dec.decode(u8, { stream: true });
-        });
+        fromPeersAppendText(dec.decode(u8, { stream: true }));
       });
       socket.on("close", function() {
         activeSocks.delete(socket);
         if (lastFromSock === socket) lastFromSock = null;
-        logLine(
-          `[session] close ${socket.remoteAddress}:${socket.remotePort}`
-        );
+        announcePeerSessionClose(socket);
       });
       socket.on("error", function(err) {
-        logLine("socket error: " + (err && err.message ? err.message : String(err)));
+        logAppendPlain(
+          "socket error: " + (err && err.message ? err.message : String(err))
+        );
       });
-      logLine(`[session] open ${socket.remoteAddress}:${socket.remotePort}`);
+      announcePeerSessionOpen(socket);
     });
-    srv.on("listening", function() {
-      logLine("listening " + JSON.stringify(srv.address()));
-    });
-    try {
-      if (bindHost) await srv.listen({ port, host: bindHost });
-      else await srv.listen(port);
-      server = srv;
-      logLine(`listening (nc-style) ${bindHost || "primary"}:${port}`);
-    } catch (err) {
-      logLine(
-        "error: " + (err && err.message ? err.message : String(err))
-      );
-    }
   }
-  function stopListen() {
-    if (server) {
-      server.close();
-      server = null;
-      activeSocks.clear();
-      lastFromSock = null;
-      logLine("stopped");
+  async function listenOnPort(port) {
+    const srv = createPeerServer();
+    try {
+      await srv.listen(port);
+    } catch (e) {
+      try {
+        srv.close();
+      } catch (_) {
+      }
+      throw e;
     }
+    server = srv;
+    cachedVirtualListenHost = await resolveVirtualListenHost();
+    const vh = cachedVirtualListenHost || pageHostname() || "?";
+    logListeningLine(vh, port);
+    setListenStatus(vh, port);
+  }
+  function listenErrorRetryable(err) {
+    const msg = err && err.message ? err.message : String(err);
+    return /already|in use|EADDR|bound|listen_err/i.test(msg);
+  }
+  async function autoListenFrom(startPort) {
+    for (let port = startPort; port < startPort + LISTEN_PORT_TRIES && port <= 65535; port++) {
+      try {
+        await listenOnPort(port);
+        return;
+      } catch (err) {
+        if (server) {
+          try {
+            server.close();
+          } catch (_) {
+          }
+          server = null;
+        }
+        if (listenErrorRetryable(err)) continue;
+        logAppendPlain("listen error: " + (err && err.message ? err.message : String(err)));
+        return;
+      }
+    }
+    logAppendPlain(
+      "listen error: no free port in range " + startPort + "\u2013" + (startPort + LISTEN_PORT_TRIES - 1)
+    );
+  }
+  var TO_PEERS_NAV_KEYS = /* @__PURE__ */ new Set([
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown"
+  ]);
+  function snapToPeersCaretEnd() {
+    const ta = document.getElementById("toPeers");
+    if (!ta || document.activeElement !== ta) return;
+    const len = ta.value.length;
+    ta.setSelectionRange(len, len);
+  }
+  function onToPeersKeyUp(e) {
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!TO_PEERS_NAV_KEYS.has(e.key)) return;
+    snapToPeersCaretEnd();
   }
   function wireUi() {
-    const listenBtn = document.getElementById("btnListen");
-    const stopBtn = document.getElementById("btnStop");
     const toPeers = document.getElementById("toPeers");
-    if (listenBtn) listenBtn.addEventListener("click", function() {
-      startListen();
-    });
-    if (stopBtn) stopBtn.addEventListener("click", function() {
-      stopListen();
-    });
     if (toPeers) {
+      toPeers.addEventListener("beforeinput", onToPeersBeforeInput);
       toPeers.addEventListener("input", function(e) {
         onToPeersInput(e.target.value);
       });
+      toPeers.addEventListener("keyup", onToPeersKeyUp);
     }
   }
-  if (typeof document !== "undefined" && document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wireUi);
-  } else {
+  function boot() {
     wireUi();
+    cachedVirtualListenHost = null;
+    resetFromPeersDom();
+    logAppendPlain("starting listener");
+    void autoListenFrom(LISTEN_PORT_START);
+  }
+  if (typeof document !== "undefined" && document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
   }
 })();
 /*! Bundled license information:

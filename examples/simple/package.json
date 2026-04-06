@@ -2,7 +2,7 @@
   "name": "@nospoon/simple-browser-net",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal browser-net example: netcat-style listen (port 23), broadcast + whois, single index.html bundle",
+  "description": "Minimal browser-net example: auto-listen from port 23, whois labels via http://whois/, single HTML bundle",
   "scripts": {
     "build": "node scripts/build.mjs"
   },

@@ -17,6 +17,7 @@
     "client": "node bin/cli.js client",
     "test": "node --test test/*.test.js",
     "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify && esbuild web/browser-net-shim.js --bundle --outfile=lib/browser-net-shim.bundle.js --format=esm --platform=browser --minify && node scripts/copy-v86-assets.js",
+    "build:examples": "npm run build:simple && npm run build:spoon-hello",
     "build:spoon-hello": "npm install --prefix examples/spoon-hello && npm run build --prefix examples/spoon-hello",
     "build:simple": "npm install --prefix examples/simple && npm run build --prefix examples/simple",
     "postinstall": "node scripts/copy-v86-assets.js",

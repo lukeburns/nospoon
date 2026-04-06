@@ -450,10 +450,11 @@ function createBrowserNetMiddleware (opts) {
   /**
    * @param {import('ws')} ws
    * @param {import('http').IncomingMessage} [_req]
+   * @returns {function(import('ws').RawData, boolean): void}
    */
   function attachWebSocketConnection (ws, _req) {
     ws._browserNetClientId = crypto.randomBytes(4).toString('hex')
-    ws.on('message', function (data, isBinary) {
+    function browserNetWsMessage (data, isBinary) {
       if (isBinary && Buffer.isBuffer(data)) {
         if (data.length < 5 || data[0] !== BIN_TAG) return
         const sid = data.readUInt32BE(1) >>> 0
@@ -711,11 +712,14 @@ function createBrowserNetMiddleware (opts) {
         browserEnd(ws, Number(msg.stream) >>> 0)
         return
       }
-    })
+    }
+
+    ws.on('message', browserNetWsMessage)
 
     ws.on('close', function () {
       cleanupWs(ws)
     })
+    return browserNetWsMessage
   }
 
   function attachToHttpServer (server) {
@@ -731,19 +735,33 @@ function createBrowserNetMiddleware (opts) {
       }
       if (path !== pathNorm) return
       wss.handleUpgrade(req, socket, head, function (ws) {
-        function attach () {
-          attachWebSocketConnection(ws, req)
+        /** @type {Array<[import('ws').RawData, boolean]>} */
+        const pending = []
+        function stash (data, isBinary) {
+          pending.push([data, isBinary])
+        }
+        ws.on('message', stash)
+        function wire () {
+          ws.removeListener('message', stash)
+          const onMessage = attachWebSocketConnection(ws, req)
+          for (const row of pending) {
+            onMessage(row[0], row[1])
+          }
+          pending.length = 0
         }
         if (prepareWebSocket) {
           Promise.resolve(prepareWebSocket(ws, req))
-            .then(attach)
+            .then(wire)
             .catch(function () {
+              try {
+                ws.removeListener('message', stash)
+              } catch (_) {}
               try {
                 ws.close()
               } catch (_) {}
             })
         } else {
-          attach()
+          wire()
         }
       })
     })
