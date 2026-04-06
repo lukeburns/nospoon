@@ -3,7 +3,8 @@
 /**
  * Netcat-style browser TCP: listen on port 23 by default, broadcast "To peers" to every session,
  * show "From peers" with optional whois labels (same behavior as spoon-hello BrowserNetPanel).
- * Control plane: `?proxyHost=HOST&proxyPort=PORT` or `?wsHost=&wsPort=` or CID host → `middle:8766`.
+ * Control plane: `?proxyHost=HOST&proxyPort=PORT` or `?wsHost=&wsPort=`. Otherwise same default as
+ * spoon-hello: WebSocket `ws://middle:8766/api/browser-net` (manual name `middle` = IPFS loopback).
  * Whois: `?controlOrigin=http://host:port` or inferred from proxyHost/proxyPort.
  */
 
@@ -14,14 +15,6 @@ const { setBrowserNetProxy } = net
 const MIDDLE_WS_PORT = 8766
 
 const NL = '\n'
-
-function isLikelyIpfsCidHostname (host) {
-  const h = String(host || '').toLowerCase()
-  if (!h || h.includes('.')) return false
-  if (h.startsWith('qm') && h.length >= 46) return true
-  if (h.startsWith('baf')) return true
-  return /^[a-z0-9]{46,}$/.test(h)
-}
 
 /** Base URL for `/api/whois/<ip>` (control HTTP). */
 let controlPanelOrigin = ''
@@ -50,7 +43,7 @@ function applyBrowserNetProxyFromLocation () {
         port: wsPort ? Number(wsPort) : MIDDLE_WS_PORT,
         pathname: '/api/browser-net'
       })
-    } else if (isLikelyIpfsCidHostname(u.hostname)) {
+    } else {
       setBrowserNetProxy({
         hostname: 'middle',
         port: MIDDLE_WS_PORT,

@@ -42,8 +42,9 @@
     bytes from mesh peers appear under &quot;From peers&quot; (tagged via <code>/api/whois/&lt;ip&gt;</code> when
     <code>controlOrigin</code> or <code>proxyHost</code> points at control HTTP). The &quot;To peers&quot; box
     broadcasts UTF-8 to every connected session; edits send DEL (0x7f) + inserts on the wire.
-    WebSocket defaults match spoon-hello (<code>ws://middle:8766/api/browser-net</code> on CID pages, or
-    <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>).
+    WebSocket defaults match spoon-hello: <code>ws://middle:8766/api/browser-net</code> unless you set
+    <code>?wsHost=…&amp;wsPort=…</code> or <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>
+    (mesh pages like <code>z32.bafy…</code> must use this default — not the page hostname).
   </p>
   <p>
     <label>Bind host <input id="bindHost" type="text" size="52" placeholder="empty = primary mesh"/></label>
@@ -15172,6 +15173,13 @@
             inner.removeEventListener("close", onClose);
           });
         }
+        /**
+         * Readable data is {@link Duplex#push}ed from the inner socket’s `data` events (no underlying pull).
+         * Required by the browser `stream` polyfill; matches Node’s push-based {@code net.Socket}.
+         * @param {number} [_size]
+         */
+        _read(_size) {
+        }
         /** @param {BufferEncoding} encoding */
         setEncoding(encoding) {
           this._encoding = encoding || null;
@@ -15320,6 +15328,12 @@
           }
           this.connecting = false;
           queueMicrotask(() => this.emit("connect"));
+        }
+        /**
+         * Readable side is fed by forwarding the wrapped {@link Socket}’s `data` events via {@link Duplex#push}.
+         * @param {number} [_size]
+         */
+        _read(_size) {
         }
         /** @param {BufferEncoding} encoding */
         setEncoding(encoding) {
@@ -15483,13 +15497,6 @@
   var { setBrowserNetProxy: setBrowserNetProxy2 } = net2;
   var MIDDLE_WS_PORT = 8766;
   var NL = "\n";
-  function isLikelyIpfsCidHostname(host) {
-    const h = String(host || "").toLowerCase();
-    if (!h || h.includes(".")) return false;
-    if (h.startsWith("qm") && h.length >= 46) return true;
-    if (h.startsWith("baf")) return true;
-    return /^[a-z0-9]{46,}$/.test(h);
-  }
   var controlPanelOrigin = "";
   function applyBrowserNetProxyFromLocation() {
     if (typeof window === "undefined" || !window.location) return;
@@ -15511,7 +15518,7 @@
           port: wsPort ? Number(wsPort) : MIDDLE_WS_PORT,
           pathname: "/api/browser-net"
         });
-      } else if (isLikelyIpfsCidHostname(u.hostname)) {
+      } else {
         setBrowserNetProxy2({
           hostname: "middle",
           port: MIDDLE_WS_PORT,

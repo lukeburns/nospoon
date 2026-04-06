@@ -85,6 +85,13 @@ export class Socket extends Duplex {
     })
   }
 
+  /**
+   * Readable data is {@link Duplex#push}ed from the inner socket’s `data` events (no underlying pull).
+   * Required by the browser `stream` polyfill; matches Node’s push-based {@code net.Socket}.
+   * @param {number} [_size]
+   */
+  _read (_size) {}
+
   /** @param {BufferEncoding} encoding */
   setEncoding (encoding) {
     this._encoding = encoding || null
@@ -249,6 +256,12 @@ class ConnectingSocket extends Duplex {
     this.connecting = false
     queueMicrotask(() => this.emit('connect'))
   }
+
+  /**
+   * Readable side is fed by forwarding the wrapped {@link Socket}’s `data` events via {@link Duplex#push}.
+   * @param {number} [_size]
+   */
+  _read (_size) {}
 
   /** @param {BufferEncoding} encoding */
   setEncoding (encoding) {

@@ -103,8 +103,9 @@ const html = `<!DOCTYPE html>
     bytes from mesh peers appear under &quot;From peers&quot; (tagged via <code>/api/whois/&lt;ip&gt;</code> when
     <code>controlOrigin</code> or <code>proxyHost</code> points at control HTTP). The &quot;To peers&quot; box
     broadcasts UTF-8 to every connected session; edits send DEL (0x7f) + inserts on the wire.
-    WebSocket defaults match spoon-hello (<code>ws://middle:8766/api/browser-net</code> on CID pages, or
-    <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>).
+    WebSocket defaults match spoon-hello: <code>ws://middle:8766/api/browser-net</code> unless you set
+    <code>?wsHost=…&amp;wsPort=…</code> or <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>
+    (mesh pages like <code>z32.bafy…</code> must use this default — not the page hostname).
   </p>
   <p>
     <label>Bind host <input id="bindHost" type="text" size="52" placeholder="empty = primary mesh"/></label>
