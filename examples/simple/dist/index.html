@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>simple browser-net</title>
+  <title>simple browser-net (nc-style)</title>
   <style>
     :root { font-family: system-ui, sans-serif; }
     body { margin: 1.25rem; max-width: 52rem; }
     code { background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 4px; }
-    pre#log {
-      margin-top: 1rem;
+    .section-label { display: block; font-weight: 600; margin-top: 1.25rem; }
+    .field-hint { margin: 0.25rem 0 0.5rem; font-size: 0.9rem; color: #444; }
+    pre#fromPeers, pre#log {
+      margin-top: 0.35rem;
       padding: 0.75rem 1rem;
       background: #111;
       color: #e8e8e8;
@@ -17,18 +19,48 @@
       font-size: 0.85rem;
       white-space: pre-wrap;
       word-break: break-word;
-      min-height: 6rem;
+      min-height: 4rem;
     }
+    pre#log { min-height: 6rem; }
+    textarea#toPeers {
+      width: 100%;
+      max-width: 52rem;
+      box-sizing: border-box;
+      font-family: ui-monospace, monospace;
+      font-size: 0.85rem;
+      padding: 0.5rem 0.65rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    label { margin-right: 0.5rem; }
   </style>
 </head>
 <body>
-  <h1>Simple TCP echo</h1>
+  <h1>Browser-net (netcat-style)</h1>
   <p>
-    Bundled <code>net.createServer</code> via nospoon <code>web/net</code> shim.
-    For a real mesh, open with
-    <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>
-    (WebSocket <code>/api/browser-net</code>).
+    Same behavior as <code>examples/spoon-hello</code> BrowserNet panel: default port <strong>23</strong>,
+    bytes from mesh peers appear under &quot;From peers&quot; (tagged via <code>/api/whois/&lt;ip&gt;</code> when
+    <code>controlOrigin</code> or <code>proxyHost</code> points at control HTTP). The &quot;To peers&quot; box
+    broadcasts UTF-8 to every connected session; edits send DEL (0x7f) + inserts on the wire.
+    WebSocket defaults match spoon-hello (<code>ws://middle:8766/api/browser-net</code> on CID pages, or
+    <code>?proxyHost=127.0.0.1&amp;proxyPort=CONTROL_HTTP_PORT</code>).
   </p>
+  <p>
+    <label>Bind host <input id="bindHost" type="text" size="52" placeholder="empty = primary mesh"/></label>
+  </p>
+  <p>
+    <label>Port <input id="listenPort" type="number" value="23" min="1" max="65535"/></label>
+  </p>
+  <p>
+    <button id="btnListen" type="button">Listen</button>
+    <button id="btnStop" type="button">Stop</button>
+  </p>
+  <span class="section-label">From peers</span>
+  <pre id="fromPeers"></pre>
+  <span class="section-label">To peers</span>
+  <p class="field-hint">Broadcast to every connected session.</p>
+  <textarea id="toPeers" rows="4" spellcheck="false" placeholder="Listening… type to send."></textarea>
+  <span class="section-label">Log</span>
   <pre id="log"></pre>
   <script>
 "use strict";
@@ -11629,7 +11661,7 @@
     exports$16.default = exports$16;
     return exports$16;
   }
-  var exports$22, _dewExec$22, exports$12, _dewExec$12, exports3, _dewExec2, exports$122, _dewExec22, exports22, EventEmitter, defaultMaxListeners, init, listenerCount, on, once, queue, draining, currentQueue, queueIndex, title, arch, platform, env, argv, execArgv, version, versions, emitWarning, binding, umask, cwd, chdir, release, _rawDebug, moduleLoadList, domain, _exiting, config, reallyExit, _kill, cpuUsage, resourceUsage, memoryUsage, kill, exit, openStdin, allowedNodeEnvironmentFlags, features, _fatalExceptions, setUncaughtExceptionCaptureCallback, _tickCallback, _debugProcess, _debugEnd, _startProfilerIdleNotifier, _stopProfilerIdleNotifier, stdout, stderr, stdin, abort, pid, ppid, execPath, debugPort, argv0, _preload_modules, setSourceMapsEnabled, _performance, nowOffset, nanoPerSec, _maxListeners, _events, _eventsCount, addListener, once2, off, removeListener, removeAllListeners, emit, prependListener, prependOnceListener, process2, exports$222, _dewExec$122, exports$13, _dewExec3, exports32, StringDecoder, exports$k, _dewExec$k, exports$j, _dewExec$j, exports$i, _dewExec$i, exports$h, _dewExec$h, exports$g, _dewExec$g, exports$f, _dewExec$f, exports$e, _dewExec$e, exports$d, _dewExec$d, exports$c, _dewExec$c, exports$b, _dewExec$b, exports$a, _dewExec$a, exports$9, _dewExec$9, exports$8, _dewExec$8, exports$7, _dewExec$7, exports$6, _dewExec$6, exports$5, _dewExec$5, exports$4, _dewExec$4, exports$3, _dewExec$3, exports$23, _dewExec$222, exports$14, _dewExec$13, exports4, _dewExec4, exports5, _dewExec5, exports$c2, _dewExec$b2, exports$b2, _dewExec$a2, exports$a2, _dewExec$92, exports$92, _dewExec$82, exports$82, _dewExec$72, exports$72, _dewExec$62, exports$62, _dewExec$52, _global$2, exports$52, _dewExec$42, _global$1, exports$42, _dewExec$32, exports$32, _dewExec$23, exports$24, _dewExec$14, exports$15, _dewExec6, _global, exports6, _extend, callbackify, debuglog, deprecate, format, inherits, inspect, isArray, isBoolean, isBuffer, isDate, isError, isFunction, isNull, isNullOrUndefined, isNumber, isObject, isPrimitive, isRegExp, isString, isSymbol, isUndefined, log, promisify, types, TextEncoder2, TextDecoder, exports$p, _dewExec$o, exports$o, _dewExec$n, exports$n, _dewExec$m, exports$m, _dewExec$l, exports$l, _dewExec$k2, exports$k2, _dewExec$j2, exports$j2, _dewExec$i2, exports$i2, _dewExec$h2, exports$h2, _dewExec$g2, exports$g2, _dewExec$f2, exports$f2, _dewExec$e2, exports$e2, _dewExec$d2, exports$d2, _dewExec$c2, exports$c3, _dewExec$b3, _global$22, exports$b3, _dewExec$a3, _global$12, exports$a3, _dewExec$93, exports$93, _dewExec$83, exports$83, _dewExec$73, exports$73, _dewExec$63, exports$63, _dewExec$53, exports$53, _dewExec$43, exports$43, _dewExec$33, exports$33, _dewExec$24, exports$25, _dewExec$15, _global2, exports$16, _dewExec7, exports7, Readable, Writable, Duplex, Transform, PassThrough, finished, pipeline, Stream, promises;
+  var exports$22, _dewExec$22, exports$12, _dewExec$12, exports3, _dewExec2, exports$122, _dewExec22, exports22, EventEmitter, defaultMaxListeners, init, listenerCount, on, once, queue, draining, currentQueue, queueIndex, title, arch, platform, env, argv, execArgv, version, versions, emitWarning, binding, umask, cwd, chdir, release, _rawDebug, moduleLoadList, domain, _exiting, config, reallyExit, _kill, cpuUsage, resourceUsage, memoryUsage, kill, exit, openStdin, allowedNodeEnvironmentFlags, features, _fatalExceptions, setUncaughtExceptionCaptureCallback, _tickCallback, _debugProcess, _debugEnd, _startProfilerIdleNotifier, _stopProfilerIdleNotifier, stdout, stderr, stdin, abort, pid, ppid, execPath, debugPort, argv0, _preload_modules, setSourceMapsEnabled, _performance, nowOffset, nanoPerSec, _maxListeners, _events, _eventsCount, addListener, once2, off, removeListener, removeAllListeners, emit, prependListener, prependOnceListener, process2, exports$222, _dewExec$122, exports$13, _dewExec3, exports32, StringDecoder, exports$k, _dewExec$k, exports$j, _dewExec$j, exports$i, _dewExec$i, exports$h, _dewExec$h, exports$g, _dewExec$g, exports$f, _dewExec$f, exports$e, _dewExec$e, exports$d, _dewExec$d, exports$c, _dewExec$c, exports$b, _dewExec$b, exports$a, _dewExec$a, exports$9, _dewExec$9, exports$8, _dewExec$8, exports$7, _dewExec$7, exports$6, _dewExec$6, exports$5, _dewExec$5, exports$4, _dewExec$4, exports$3, _dewExec$3, exports$23, _dewExec$222, exports$14, _dewExec$13, exports4, _dewExec4, exports5, _dewExec5, exports$c2, _dewExec$b2, exports$b2, _dewExec$a2, exports$a2, _dewExec$92, exports$92, _dewExec$82, exports$82, _dewExec$72, exports$72, _dewExec$62, exports$62, _dewExec$52, _global$2, exports$52, _dewExec$42, _global$1, exports$42, _dewExec$32, exports$32, _dewExec$23, exports$24, _dewExec$14, exports$15, _dewExec6, _global, exports6, _extend, callbackify, debuglog, deprecate, format, inherits, inspect, isArray, isBoolean, isBuffer, isDate, isError, isFunction, isNull, isNullOrUndefined, isNumber, isObject, isPrimitive, isRegExp, isString, isSymbol, isUndefined, log, promisify, types, TextEncoder2, TextDecoder2, exports$p, _dewExec$o, exports$o, _dewExec$n, exports$n, _dewExec$m, exports$m, _dewExec$l, exports$l, _dewExec$k2, exports$k2, _dewExec$j2, exports$j2, _dewExec$i2, exports$i2, _dewExec$h2, exports$h2, _dewExec$g2, exports$g2, _dewExec$f2, exports$f2, _dewExec$e2, exports$e2, _dewExec$d2, exports$d2, _dewExec$c2, exports$c3, _dewExec$b3, _global$22, exports$b3, _dewExec$a3, _global$12, exports$a3, _dewExec$93, exports$93, _dewExec$83, exports$83, _dewExec$73, exports$73, _dewExec$63, exports$63, _dewExec$53, exports$53, _dewExec$43, exports$43, _dewExec$33, exports$33, _dewExec$24, exports$25, _dewExec$15, _global2, exports$16, _dewExec7, exports7, Readable, Writable, Duplex, Transform, PassThrough, finished, pipeline, Stream, promises;
   var init_stream = __esm({
     "node-modules-polyfills:stream"() {
       init_Buffer();
@@ -12048,7 +12080,7 @@
       promisify = exports6.promisify;
       types = exports6.types;
       TextEncoder2 = exports6.TextEncoder = globalThis.TextEncoder;
-      TextDecoder = exports6.TextDecoder = globalThis.TextDecoder;
+      TextDecoder2 = exports6.TextDecoder = globalThis.TextDecoder;
       exports$p = {};
       _dewExec$o = false;
       exports$o = {};
@@ -15450,6 +15482,7 @@
   var net2 = (init_net(), __toCommonJS(net_exports));
   var { setBrowserNetProxy: setBrowserNetProxy2 } = net2;
   var MIDDLE_WS_PORT = 8766;
+  var NL = "\n";
   function isLikelyIpfsCidHostname(host) {
     const h = String(host || "").toLowerCase();
     if (!h || h.includes(".")) return false;
@@ -15457,6 +15490,7 @@
     if (h.startsWith("baf")) return true;
     return /^[a-z0-9]{46,}$/.test(h);
   }
+  var controlPanelOrigin = "";
   function applyBrowserNetProxyFromLocation() {
     if (typeof window === "undefined" || !window.location) return;
     const u = new URL(window.location.href);
@@ -15468,55 +15502,217 @@
         port: portStr ? Number(portStr) : void 0,
         pathname: "/api/browser-net"
       });
+    } else {
+      const wsHost = u.searchParams.get("wsHost");
+      if (wsHost && wsHost.trim()) {
+        const wsPort = u.searchParams.get("wsPort");
+        setBrowserNetProxy2({
+          hostname: wsHost.trim(),
+          port: wsPort ? Number(wsPort) : MIDDLE_WS_PORT,
+          pathname: "/api/browser-net"
+        });
+      } else if (isLikelyIpfsCidHostname(u.hostname)) {
+        setBrowserNetProxy2({
+          hostname: "middle",
+          port: MIDDLE_WS_PORT,
+          pathname: "/api/browser-net"
+        });
+      }
+    }
+    const explicit = u.searchParams.get("controlOrigin");
+    if (explicit && explicit.trim()) {
+      controlPanelOrigin = explicit.trim();
       return;
     }
-    const wsHost = u.searchParams.get("wsHost");
-    if (wsHost && wsHost.trim()) {
-      const wsPort = u.searchParams.get("wsPort");
-      setBrowserNetProxy2({
-        hostname: wsHost.trim(),
-        port: wsPort ? Number(wsPort) : MIDDLE_WS_PORT,
-        pathname: "/api/browser-net"
-      });
+    if (host.trim()) {
+      const p = portStr ? Number(portStr) : 80;
+      controlPanelOrigin = `http://${host.trim()}:${p}`;
       return;
     }
-    if (isLikelyIpfsCidHostname(u.hostname)) {
-      setBrowserNetProxy2({
-        hostname: "middle",
-        port: MIDDLE_WS_PORT,
-        pathname: "/api/browser-net"
-      });
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      controlPanelOrigin = u.origin;
     }
   }
-  function log2(line) {
+  function logLine(line) {
     const el = document.getElementById("log");
-    if (el) el.textContent += String(line) + "\n";
+    if (el) el.textContent += String(line) + NL;
     if (typeof console !== "undefined" && console.log) console.log(line);
   }
+  var fromPeersText = "";
+  function setFromPeers(updater) {
+    if (typeof updater === "function") fromPeersText = updater(fromPeersText);
+    else fromPeersText = updater;
+    const el = document.getElementById("fromPeers");
+    if (el) el.textContent = fromPeersText;
+  }
   applyBrowserNetProxyFromLocation();
-  var server = net2.createServer(function(socket) {
-    log2("connection from " + socket.remoteAddress + ":" + socket.remotePort);
-    socket.on("data", function(chunk) {
-      const s = chunk.toString();
-      log2("echo: " + JSON.stringify(s));
-      socket.write(chunk);
+  var server = null;
+  var activeSocks = /* @__PURE__ */ new Set();
+  var peerDec = /* @__PURE__ */ new WeakMap();
+  var labeledPeers = /* @__PURE__ */ new WeakSet();
+  var awaitingWhois = /* @__PURE__ */ new WeakMap();
+  var lastFromSock = null;
+  var lastToPeersValue = "";
+  function broadcastBytes(u8) {
+    for (const sock of activeSocks) {
+      try {
+        sock.write(u8);
+      } catch (_) {
+      }
+    }
+  }
+  function delBytesForString(removedJs) {
+    const enc = new TextEncoder();
+    const n = enc.encode(removedJs).byteLength;
+    if (!n) return;
+    const u = new Uint8Array(n);
+    u.fill(127);
+    broadcastBytes(u);
+  }
+  function onToPeersInput(v) {
+    const ta = document.getElementById("toPeers");
+    if (ta) ta.value = v;
+    const prev = lastToPeersValue;
+    if (v === prev) return;
+    if (server && activeSocks.size > 0) {
+      let p = 0;
+      const min = Math.min(v.length, prev.length);
+      while (p < min && v.charCodeAt(p) === prev.charCodeAt(p)) p++;
+      const del = prev.slice(p);
+      const ins = v.slice(p);
+      if (del.length) delBytesForString(del);
+      if (ins.length) broadcastBytes(new TextEncoder().encode(ins));
+    }
+    lastToPeersValue = v;
+  }
+  async function startListen() {
+    if (server) {
+      logLine("already listening \u2014 stop first");
+      return;
+    }
+    const portEl = document.getElementById("listenPort");
+    const bindEl = document.getElementById("bindHost");
+    const port = Number(portEl && portEl.value) || 23;
+    const bindHost = bindEl && bindEl.value ? String(bindEl.value).trim() : "";
+    const o = controlPanelOrigin.indexOf("://") !== -1 ? controlPanelOrigin : controlPanelOrigin ? `http://${controlPanelOrigin}` : "";
+    const srv = net2.createServer(function(socket) {
+      activeSocks.add(socket);
+      peerDec.set(socket, new TextDecoder("utf-8", { fatal: false }));
+      socket.on("data", function(chunk) {
+        const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        function flushPending(label) {
+          const pending = awaitingWhois.get(socket);
+          if (!pending) return;
+          awaitingWhois.delete(socket);
+          labeledPeers.add(socket);
+          setFromPeers(function(prev) {
+            let next = prev + `[${label}] `;
+            const dec2 = peerDec.get(socket);
+            for (let i = 0; i < pending.length; i++) {
+              next += dec2.decode(pending[i], { stream: true });
+            }
+            return next;
+          });
+        }
+        if (!labeledPeers.has(socket)) {
+          if (!awaitingWhois.has(socket)) {
+            awaitingWhois.set(socket, []);
+            setFromPeers(function(prev) {
+              return prev.length ? prev + NL : prev;
+            });
+            lastFromSock = socket;
+            const ip = socket.remoteAddress;
+            if (o && ip) {
+              const whoisUrl = new URL(
+                `/api/whois/${encodeURIComponent(ip)}`,
+                o
+              ).href;
+              fetch(whoisUrl).then(function(r) {
+                return r.ok ? r.text() : "";
+              }).then(function(raw) {
+                if (!activeSocks.has(socket)) return;
+                const line = raw.trim();
+                const label = line || `${ip}:${socket.remotePort}`;
+                flushPending(label);
+              }).catch(function() {
+                if (!activeSocks.has(socket)) return;
+                flushPending(`${ip}:${socket.remotePort}`);
+              });
+            }
+          }
+          awaitingWhois.get(socket).push(u8);
+          if (!labeledPeers.has(socket) && !(o && socket.remoteAddress)) {
+            flushPending(`${socket.remoteAddress}:${socket.remotePort}`);
+          }
+          return;
+        }
+        if (lastFromSock !== socket) {
+          setFromPeers(function(prev) {
+            return prev.length ? prev + NL : prev;
+          });
+          lastFromSock = socket;
+        }
+        const dec = peerDec.get(socket);
+        setFromPeers(function(prev) {
+          return prev + dec.decode(u8, { stream: true });
+        });
+      });
+      socket.on("close", function() {
+        activeSocks.delete(socket);
+        if (lastFromSock === socket) lastFromSock = null;
+        logLine(
+          `[session] close ${socket.remoteAddress}:${socket.remotePort}`
+        );
+      });
+      socket.on("error", function(err) {
+        logLine("socket error: " + (err && err.message ? err.message : String(err)));
+      });
+      logLine(`[session] open ${socket.remoteAddress}:${socket.remotePort}`);
     });
-    socket.on("end", function() {
-      log2("client ended readable side");
+    srv.on("listening", function() {
+      logLine("listening " + JSON.stringify(srv.address()));
     });
-    socket.on("close", function() {
-      log2("socket closed");
+    try {
+      if (bindHost) await srv.listen({ port, host: bindHost });
+      else await srv.listen(port);
+      server = srv;
+      logLine(`listening (nc-style) ${bindHost || "primary"}:${port}`);
+    } catch (err) {
+      logLine(
+        "error: " + (err && err.message ? err.message : String(err))
+      );
+    }
+  }
+  function stopListen() {
+    if (server) {
+      server.close();
+      server = null;
+      activeSocks.clear();
+      lastFromSock = null;
+      logLine("stopped");
+    }
+  }
+  function wireUi() {
+    const listenBtn = document.getElementById("btnListen");
+    const stopBtn = document.getElementById("btnStop");
+    const toPeers = document.getElementById("toPeers");
+    if (listenBtn) listenBtn.addEventListener("click", function() {
+      startListen();
     });
-    socket.on("error", function(err) {
-      log2("socket error: " + (err && err.message ? err.message : String(err)));
+    if (stopBtn) stopBtn.addEventListener("click", function() {
+      stopListen();
     });
-  });
-  server.on("listening", function() {
-    log2("listening " + JSON.stringify(server.address()));
-  });
-  server.listen(7777, function() {
-    log2("listen callback fired (port 7777)");
-  });
+    if (toPeers) {
+      toPeers.addEventListener("input", function(e) {
+        onToPeersInput(e.target.value);
+      });
+    }
+  }
+  if (typeof document !== "undefined" && document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wireUi);
+  } else {
+    wireUi();
+  }
 })();
 /*! Bundled license information:
 

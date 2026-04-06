@@ -2,7 +2,7 @@
   "name": "@nospoon/simple-browser-net",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal browser-net example: one bundled echo server in a single index.html",
+  "description": "Minimal browser-net example: netcat-style listen (port 23), broadcast + whois, single index.html bundle",
   "scripts": {
     "build": "node scripts/build.mjs"
   },
