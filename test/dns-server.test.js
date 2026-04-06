@@ -127,6 +127,30 @@ describe('dns-server', function () {
 
     await server.stop()
   })
+
+  it('mesh key.topic: A with no mesh IP returns NODATA (NOERROR), not NXDOMAIN', async function () {
+    const z32Label = encodeKeyLabel('33'.repeat(32))
+    const name = `${z32Label}.spoon`
+    const port = await findFreePort()
+    const server = createDnsServer({
+      port,
+      lookupManual: () => null,
+      resolveMeshA: () => null,
+      forward: false
+    })
+    await server.start()
+
+    const res = await queryDns(port, {
+      type: 'query',
+      id: 0x3333,
+      questions: [{ type: 'A', name }]
+    })
+
+    assert.equal(res.rcode, 'NOERROR')
+    assert.equal(res.answers.length, 0)
+
+    await server.stop()
+  })
 })
 
 function findFreePort () {
