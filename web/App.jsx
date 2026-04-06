@@ -1168,7 +1168,7 @@ export default function App () {
           {sseState === 'open' ? 'Connected' : sseState === 'connecting' ? 'Live updates: connecting…' : 'Reconnecting…'}
         </span>
       </p>
-      <p className="meta">Public key: {s.clientPublicKeyZ32 || '—'}</p>
+      <p className="meta">Public key: <a href={`http://${s.clientPublicKeyZ32}/`} target="_blank" rel="noopener noreferrer" className="peer-key-link">{s.clientPublicKeyZ32 || '—'}</a></p>
 
       <h2>Primary interface</h2>
       <form onSubmit={onPeerSubmit}>

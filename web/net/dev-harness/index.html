@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>browser-net shim — dev harness</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 52rem; }
+    pre#log {
+      font-family: ui-monospace, monospace;
+      background: #1a1b1e;
+      color: #e8e6e3;
+      padding: 0.75rem;
+      min-height: 12rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    code { background: #eee; padding: 0.1rem 0.25rem; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>browser-net shim</h1>
+  <p>
+    Bundle: <code>test/test-echo.js</code> → <code>dev-harness/bundle.js</code>.
+    Point the control plane with query params, e.g.
+    <code>?proxyHost=127.0.0.1&amp;proxyPort=4040</code> (match your nospoon HTTP server).
+  </p>
+  <pre id="log"></pre>
+  <script>
+    (function () {
+      var log = document.getElementById('log')
+      var origLog = console.log
+      var origErr = console.error
+      function append (prefix, args) {
+        var line = args.map(function (a) {
+          try { return typeof a === 'string' ? a : JSON.stringify(a) } catch (_) { return String(a) }
+        }).join(' ')
+        log.textContent += (prefix || '') + line + '\n'
+      }
+      console.log = function () {
+        origLog.apply(console, arguments)
+        append('', Array.prototype.slice.call(arguments))
+      }
+      console.error = function () {
+        origErr.apply(console, arguments)
+        append('ERR: ', Array.prototype.slice.call(arguments))
+      }
+    })()
+  </script>
+  <script src="/bundle.js"></script>
+</body>
+</html>

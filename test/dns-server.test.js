@@ -5,6 +5,7 @@ const assert = require('node:assert/strict')
 const dgram = require('dgram')
 const dns = require('dns-packet')
 const { createDnsServer } = require('../lib/dns-server')
+const { encodeKeyLabel } = require('../lib/dns-mesh-name')
 
 describe('dns-server', function () {
   it('manual IPv4-only: AAAA returns NOERROR with empty answers (NODATA)', async function () {
@@ -47,6 +48,32 @@ describe('dns-server', function () {
 
     assert.equal(res.rcode, 'NOERROR')
     assert.equal(res.answers.length, 0)
+
+    await server.stop()
+  })
+
+  it('manual A overrides mesh A for the same name', async function () {
+    const z32Label = encodeKeyLabel('11'.repeat(32))
+    const port = await findFreePort()
+    const server = createDnsServer({
+      port,
+      lookupManual: (name) =>
+        name === z32Label ? { ipv4: '127.0.0.1' } : null,
+      resolveMeshA: () => '10.99.0.7',
+      forward: false
+    })
+    await server.start()
+
+    const res = await queryDns(port, {
+      type: 'query',
+      id: 0xabcd,
+      questions: [{ type: 'A', name: z32Label }]
+    })
+
+    assert.equal(res.rcode, 'NOERROR')
+    assert.equal(res.answers.length, 1)
+    assert.equal(res.answers[0].type, 'A')
+    assert.equal(res.answers[0].data, '127.0.0.1')
 
     await server.stop()
   })
