@@ -78,26 +78,12 @@ const html = `<!DOCTYPE html>
       color: #e8e8e8;
       border-radius: 8px;
       font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
       min-height: 4rem;
       font-family: ui-monospace, monospace;
     }
-    pre#log {
-      min-height: 6rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    #fromPeers {
-      display: flex;
-      flex-direction: column-reverse;
-      align-items: stretch;
-      gap: 0.35rem;
-      word-break: break-word;
-    }
-    .from-peers-line {
-      width: 100%;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
+    pre#log { min-height: 6rem; }
     .peer-conn-line {
       color: #a8a8a8;
     }

@@ -218,6 +218,13 @@ let fromPeersNonEmpty = false
 /** @type {Text | null} */
 let fromPeersTailText = null
 
+function fromPeersBreakIfNeeded () {
+  const el = document.getElementById('fromPeers')
+  if (!el || !fromPeersNonEmpty) return
+  el.appendChild(document.createElement('br'))
+  fromPeersTailText = null
+}
+
 /**
  * @param {string} fullLabel
  * @returns {HTMLSpanElement}
@@ -247,13 +254,15 @@ function createPeerHostBracketSpan (fullLabel) {
 function fromPeersAppendConnectionStatus (fullLabel, status) {
   const el = document.getElementById('fromPeers')
   if (!el) return
-  const line = document.createElement('div')
-  line.className = 'from-peers-line peer-conn-line'
-  line.appendChild(createPeerHostBracketSpan(fullLabel))
-  line.appendChild(
+  fromPeersBreakIfNeeded()
+  const row = document.createElement('span')
+  row.className = 'peer-conn-line'
+  row.appendChild(createPeerHostBracketSpan(fullLabel))
+  row.appendChild(
     document.createTextNode(status === 'connected' ? 'connected' : 'disconnected')
   )
-  el.appendChild(line)
+  el.appendChild(row)
+  el.appendChild(document.createElement('br'))
   fromPeersTailText = null
   fromPeersNonEmpty = true
 }
@@ -322,12 +331,9 @@ function announcePeerSessionClose (socket) {
 function fromPeersAppendLabel (fullLabel) {
   const el = document.getElementById('fromPeers')
   if (!el) return
-  const line = document.createElement('div')
-  line.className = 'from-peers-line'
-  line.appendChild(createPeerHostBracketSpan(fullLabel))
+  el.appendChild(createPeerHostBracketSpan(fullLabel))
   fromPeersTailText = document.createTextNode('')
-  line.appendChild(fromPeersTailText)
-  el.appendChild(line)
+  el.appendChild(fromPeersTailText)
   fromPeersNonEmpty = true
 }
 
@@ -336,11 +342,8 @@ function fromPeersAppendText (s) {
   const el = document.getElementById('fromPeers')
   if (!el) return
   if (!fromPeersTailText) {
-    const line = document.createElement('div')
-    line.className = 'from-peers-line'
     fromPeersTailText = document.createTextNode('')
-    line.appendChild(fromPeersTailText)
-    el.appendChild(line)
+    el.appendChild(fromPeersTailText)
   }
   fromPeersTailText.nodeValue += s
   fromPeersNonEmpty = true
@@ -433,6 +436,7 @@ function createPeerServer () {
       if (!labeledPeers.has(socket)) {
         if (!awaitingWhois.has(socket)) {
           awaitingWhois.set(socket, [])
+          fromPeersBreakIfNeeded()
           lastFromSock = socket
           const ip = socket.remoteAddress
           if (ip) {
@@ -462,6 +466,7 @@ function createPeerServer () {
         return
       }
       if (lastFromSock !== socket) {
+        fromPeersBreakIfNeeded()
         fromPeersTailText = null
         lastFromSock = socket
       }

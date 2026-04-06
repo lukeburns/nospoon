@@ -17,26 +17,12 @@
       color: #e8e8e8;
       border-radius: 8px;
       font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
       min-height: 4rem;
       font-family: ui-monospace, monospace;
     }
-    pre#log {
-      min-height: 6rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    #fromPeers {
-      display: flex;
-      flex-direction: column-reverse;
-      align-items: stretch;
-      gap: 0.35rem;
-      word-break: break-word;
-    }
-    .from-peers-line {
-      width: 100%;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
+    pre#log { min-height: 6rem; }
     .peer-conn-line {
       color: #a8a8a8;
     }
@@ -15695,6 +15681,12 @@
   var peerConnectedLineDone = /* @__PURE__ */ new WeakSet();
   var fromPeersNonEmpty = false;
   var fromPeersTailText = null;
+  function fromPeersBreakIfNeeded() {
+    const el = document.getElementById("fromPeers");
+    if (!el || !fromPeersNonEmpty) return;
+    el.appendChild(document.createElement("br"));
+    fromPeersTailText = null;
+  }
   function createPeerHostBracketSpan(fullLabel) {
     const wrap = document.createElement("span");
     wrap.className = "peer-tag";
@@ -15719,13 +15711,15 @@
   function fromPeersAppendConnectionStatus(fullLabel, status) {
     const el = document.getElementById("fromPeers");
     if (!el) return;
-    const line = document.createElement("div");
-    line.className = "from-peers-line peer-conn-line";
-    line.appendChild(createPeerHostBracketSpan(fullLabel));
-    line.appendChild(
+    fromPeersBreakIfNeeded();
+    const row = document.createElement("span");
+    row.className = "peer-conn-line";
+    row.appendChild(createPeerHostBracketSpan(fullLabel));
+    row.appendChild(
       document.createTextNode(status === "connected" ? "connected" : "disconnected")
     );
-    el.appendChild(line);
+    el.appendChild(row);
+    el.appendChild(document.createElement("br"));
     fromPeersTailText = null;
     fromPeersNonEmpty = true;
   }
@@ -15784,12 +15778,9 @@
   function fromPeersAppendLabel(fullLabel) {
     const el = document.getElementById("fromPeers");
     if (!el) return;
-    const line = document.createElement("div");
-    line.className = "from-peers-line";
-    line.appendChild(createPeerHostBracketSpan(fullLabel));
+    el.appendChild(createPeerHostBracketSpan(fullLabel));
     fromPeersTailText = document.createTextNode("");
-    line.appendChild(fromPeersTailText);
-    el.appendChild(line);
+    el.appendChild(fromPeersTailText);
     fromPeersNonEmpty = true;
   }
   function fromPeersAppendText(s) {
@@ -15797,11 +15788,8 @@
     const el = document.getElementById("fromPeers");
     if (!el) return;
     if (!fromPeersTailText) {
-      const line = document.createElement("div");
-      line.className = "from-peers-line";
       fromPeersTailText = document.createTextNode("");
-      line.appendChild(fromPeersTailText);
-      el.appendChild(line);
+      el.appendChild(fromPeersTailText);
     }
     fromPeersTailText.nodeValue += s;
     fromPeersNonEmpty = true;
@@ -15878,6 +15866,7 @@
         if (!labeledPeers.has(socket)) {
           if (!awaitingWhois.has(socket)) {
             awaitingWhois.set(socket, []);
+            fromPeersBreakIfNeeded();
             lastFromSock = socket;
             const ip = socket.remoteAddress;
             if (ip) {
@@ -15904,6 +15893,7 @@
           return;
         }
         if (lastFromSock !== socket) {
+          fromPeersBreakIfNeeded();
           fromPeersTailText = null;
           lastFromSock = socket;
         }

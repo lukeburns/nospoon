@@ -53,7 +53,6 @@
     "lib/shared-swarm-inbound.js",
     "lib/server.js",
     "lib/mesh-identifier.js",
-    "lib/nospoon-identity.js",
     "lib/mesh-ip-reservations.js",
     "lib/control-http.js",
     "lib/dns-server.js",
