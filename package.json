@@ -62,6 +62,8 @@
     "lib/ipfs-cid-dns.js",
     "lib/ipfs-dweb-http.js",
     "lib/ipfs-resolve-content.js",
+    "lib/ipfs-helia-worker-entry.js",
+    "lib/ipfs-helia-worker-bridge.js",
     "lib/browser-net-proxy.js",
     "lib/browser-net-tcp.js",
     "web/net/lib/browser-net-middleware.js",
