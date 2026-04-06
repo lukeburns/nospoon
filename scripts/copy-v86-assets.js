@@ -2,6 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { ProxyAgent } = require('undici')
 
 const root = path.join(__dirname, '..')
 const srcDir = path.join(root, 'node_modules', 'v86', 'build')
@@ -13,9 +14,41 @@ const freebsdDir = path.join(guestDir, 'freebsd')
 const FREEBSD_DISK_BYTES = 2147483648
 const FREEBSD_CHUNK = 1048576
 const FREEBSD_CHUNK_COUNT = FREEBSD_DISK_BYTES / FREEBSD_CHUNK
-const FREEBSD_CHUNK_BASE = 'https://i.copy.sh/freebsd/'
-const FREEBSD_STATE_URL = 'https://i.copy.sh/freebsd_state-v2.bin.zst'
+/** Override to mirror (trailing slash optional): `FREEBSD_CHUNK_BASE=https://internal/freebsd/` */
+const FREEBSD_CHUNK_BASE = String(
+  process.env.FREEBSD_CHUNK_BASE || 'https://i.copy.sh/freebsd/'
+).replace(/\/?$/, '/')
+const FREEBSD_STATE_URL =
+  process.env.FREEBSD_STATE_URL || 'https://i.copy.sh/freebsd_state-v2.bin.zst'
 const FREEBSD_STATE_FILE = 'freebsd_state-v2.bin.zst'
+
+/** Node’s global fetch does not use HTTPS_PROXY; wire Undici when set. */
+let _proxyDispatcher = null
+function fetchInit () {
+  const proxy = (
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.https_proxy ||
+    process.env.http_proxy ||
+    ''
+  ).trim()
+  if (!proxy) return { redirect: 'follow' }
+  if (!_proxyDispatcher) _proxyDispatcher = new ProxyAgent(proxy)
+  return { redirect: 'follow', dispatcher: _proxyDispatcher }
+}
+
+function describeFetchError (err, url) {
+  const parts = []
+  let c = err
+  let depth = 0
+  while (c && depth < 8) {
+    if (c.message) parts.push(c.message)
+    c = c.cause
+    depth++
+  }
+  if (!parts.length) parts.push(String(err))
+  return parts.join(' — ') + ' (' + url + ')'
+}
 
 /** Fetched at build/install time so the browser loads guest firmware from the control panel (no cross-origin fetch). */
 const GUEST_URLS = [
@@ -36,14 +69,34 @@ function argvHasFlag (name) {
 }
 
 async function fetchToFile (url, dest, label) {
-  const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok) {
-    throw new Error(`${label}: HTTP ${res.status}`)
+  const maxAttempts = Number(process.env.COPY_V86_FETCH_ATTEMPTS || 5) || 5
+  const init = fetchInit()
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, init)
+      if (!res.ok) {
+        if (res.status >= 500 && attempt < maxAttempts) {
+          await new Promise(function (r) {
+            setTimeout(r, Math.min(8000, 400 * Math.pow(2, attempt - 1)))
+          })
+          continue
+        }
+        throw new Error(`${label}: HTTP ${res.status}`)
+      }
+      const buf = Buffer.from(await res.arrayBuffer())
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.writeFileSync(dest, buf)
+      return buf.length
+    } catch (e) {
+      if (attempt < maxAttempts) {
+        await new Promise(function (r) {
+          setTimeout(r, Math.min(8000, 400 * Math.pow(2, attempt - 1)))
+        })
+        continue
+      }
+      throw new Error(describeFetchError(e, url))
+    }
   }
-  const buf = Buffer.from(await res.arrayBuffer())
-  fs.mkdirSync(path.dirname(dest), { recursive: true })
-  fs.writeFileSync(dest, buf)
-  return buf.length
 }
 
 function writeFreebsdMeta () {
@@ -146,7 +199,7 @@ async function ensureGuestAssets () {
       } catch (_) {}
     }
     try {
-      const res = await fetch(url, { redirect: 'follow' })
+      const res = await fetch(url, fetchInit())
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
       }
@@ -209,6 +262,9 @@ async function main () {
       console.warn(
         'copy-v86-assets: FreeBSD disk chunks —',
         e && e.message ? e.message : e
+      )
+      console.warn(
+        'copy-v86-assets: hints — HTTPS_PROXY for corporate egress; mirror chunks and set FREEBSD_CHUNK_BASE; IPv6 issues: NODE_OPTIONS=--dns-result-order=ipv4first'
       )
       process.exitCode = 1
     }
