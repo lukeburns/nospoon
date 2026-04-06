@@ -1,0 +1,46 @@
+diff --git a/node_modules/@helia/utils/dist/src/pins.js b/node_modules/@helia/utils/dist/src/pins.js
+index 63fac78..177a338 100644
+--- a/node_modules/@helia/utils/dist/src/pins.js
++++ b/node_modules/@helia/utils/dist/src/pins.js
+@@ -74,13 +74,18 @@ export class PinsImpl {
+         const block = createUnsafe({ bytes, cid, codec });
+         yield cid;
+         // walk dag, ensure all blocks are present
+-        for (const [, cid] of block.links()) {
+-            yield* await queue.add(async () => {
+-                return this.#walkDag(cid, queue, {
++        for (const [, linkCid] of block.links()) {
++            // Sync fn so queue.add resolves to the async generator (async () => wrapped it in a
++            // Promise and yield* then saw a non-iterable in some runtimes — "is not async iterable").
++            const subdag = await queue.add(() => {
++                return this.#walkDag(linkCid, queue, {
+                     ...options,
+                     depth: options.depth - 1
+                 });
+             });
++            for await (const y of subdag) {
++                yield y;
++            }
+         }
+     }
+     /**
+diff --git a/node_modules/@helia/utils/dist/src/utils/storage.js b/node_modules/@helia/utils/dist/src/utils/storage.js
+index 297d645..57462ad 100644
+--- a/node_modules/@helia/utils/dist/src/utils/storage.js
++++ b/node_modules/@helia/utils/dist/src/utils/storage.js
+@@ -181,7 +181,14 @@ async function raceBlockRetrievers(cid, blockBrokers, hasher, options) {
+                 return block;
+             }
+             catch (err) {
+-                options.log.error('could not retrieve verified block for %c from %s - %e', cid, retriever.name, err);
++                const missing = err != null && typeof err === 'object' &&
++                    (err.code === 'ERR_NOT_FOUND' || err.name === 'NotFoundError');
++                if (missing) {
++                    options.log.trace('block not available from %s for %c — %e', retriever.name, cid, err);
++                }
++                else {
++                    options.log.error('could not retrieve verified block for %c from %s - %e', cid, retriever.name, err);
++                }
+                 throw err;
+             }
+         }));

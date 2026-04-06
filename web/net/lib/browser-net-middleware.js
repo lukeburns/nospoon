@@ -3,13 +3,9 @@
 /**
  * TCP middleman: WebSocket multiplexer + IPv4 TCP termination for browser `net` shims.
  *
- * Inbound: decoded inner IPv4 TCP datagrams on the mesh path — {@link #tryConsumeInboundPacket}
- * returns whether this module handled the packet (caller should not pass-through) or declined.
- *
- * Outbound replies: {@link BrowserNetMiddlewareOptions#frameIpv4ForPeerStream} turns an inner IPv4
- * datagram into bytes for `ctx.writeFramed` (length prefix, key-address encoding, etc.).
- *
- * Protocol matches {@link ./browser-net-client.js} (hello, listen, unlisten, end, BIN_TAG binary).
+ * Inbound: decoded inner IPv4 TCP datagrams — {@link #tryConsumeInboundPacket}.
+ * Outbound connect: browser sends `connect`; {@link BrowserNetMiddlewareOptions#getOutboundRoute}
+ * supplies `writeFramed` + peer identity for SYN on the correct mesh stream.
  */
 
 const crypto = require('crypto')
@@ -34,13 +30,22 @@ const BIN_TAG = 0x01
  */
 
 /**
+ * @typedef {object} OutboundRoute
+ * @property {string} peerKeyHex
+ * @property {string} peerAliasIp
+ * @property {function(Buffer): void} writeFramed
+ */
+
+/**
  * @typedef {object} BrowserNetMiddlewareOptions
- * @property {function(Buffer): Buffer} frameIpv4ForPeerStream — inner IPv4 datagram → wire bytes for `writeFramed`
- * @property {function(Buffer, InboundPacketCtx): boolean} [shouldAcceptInboundPacket] — if false, decline packet (pass-through). Default accepts all when a listener matches.
- * @property {function(): string | null | undefined} getDefaultListenIpv4 — default bind when `listen` omits `host`
- * @property {function(string): string | null | undefined} [resolveListenHost] — map `host` string to local IPv4
- * @property {string} [webSocketPath] — HTTP upgrade path (default `/api/browser-net`)
- * @property {{ defaultListenNotReady?: string, unknownListenHost?: string }} [messages] — `listen_err` text
+ * @property {function(Buffer): Buffer} frameIpv4ForPeerStream
+ * @property {function(Buffer, InboundPacketCtx): boolean} [shouldAcceptInboundPacket]
+ * @property {function(): string | null | undefined} getDefaultListenIpv4
+ * @property {function(string): string | null | undefined} [resolveListenHost]
+ * @property {function(string): string | null | undefined} [resolveConnectHost] — non-IPv4 `connect` host
+ * @property {function(string): OutboundRoute | null | undefined} [getOutboundRoute] — required for `connect` op
+ * @property {string} [webSocketPath]
+ * @property {{ defaultListenNotReady?: string, unknownListenHost?: string }} [messages]
  */
 
 /**
@@ -58,6 +63,10 @@ function createBrowserNetMiddleware (opts) {
   const getDefaultListenIpv4 = opts.getDefaultListenIpv4
   const resolveListenHost =
     typeof opts.resolveListenHost === 'function' ? opts.resolveListenHost : null
+  const resolveConnectHost =
+    typeof opts.resolveConnectHost === 'function' ? opts.resolveConnectHost : null
+  const getOutboundRoute =
+    typeof opts.getOutboundRoute === 'function' ? opts.getOutboundRoute : null
   const shouldAcceptInboundPacket =
     typeof opts.shouldAcceptInboundPacket === 'function'
       ? opts.shouldAcceptInboundPacket
@@ -88,10 +97,6 @@ function createBrowserNetMiddleware (opts) {
     return `${peerKeyHex}:${remoteIp}:${remotePort}:${localIp}:${localPort}`
   }
 
-  /**
-   * @param {function(Buffer): void} writeFramed
-   * @param {Buffer} innerIpv4
-   */
   function sendFramedIpv4 (writeFramed, innerIpv4) {
     try {
       writeFramed(frameIpv4ForPeerStream(innerIpv4))
@@ -101,6 +106,7 @@ function createBrowserNetMiddleware (opts) {
   /**
    * @typedef {object} TcpSession
    * @property {string} peerKeyHex
+   * @property {string} peerAliasIp
    * @property {string} remoteIp
    * @property {string} localIp
    * @property {number} remotePort
@@ -109,11 +115,23 @@ function createBrowserNetMiddleware (opts) {
    * @property {number} synOurIsn
    * @property {number} sendNext
    * @property {number} recvNext
-   * @property {'syn_rcvd'|'established'|'closed'} state
+   * @property {'syn_sent'|'syn_rcvd'|'established'|'closed'} state
    * @property {import('ws')} ws
    * @property {number} streamId
    * @property {function(Buffer): void} writeFramed
+   * @property {boolean} [outbound]
+   * @property {string} [connectRid]
    */
+
+  /**
+   * Merge TCP flags; bare SYN (client handshake) must not set ACK.
+   * @param {number} flags
+   */
+  function tcpFlagsWithAck (flags) {
+    if (flags & FLAG_RST) return flags
+    if ((flags & FLAG_SYN) && !(flags & FLAG_ACK)) return flags
+    return flags | FLAG_ACK
+  }
 
   /**
    * @param {TcpSession} s
@@ -122,7 +140,7 @@ function createBrowserNetMiddleware (opts) {
    */
   function sendTcp (s, flags, payload) {
     const pay = payload && payload.length ? payload : Buffer.alloc(0)
-    const f = flags | FLAG_ACK
+    const f = tcpFlagsWithAck(flags)
     const pkt = buildIpv4TcpPacket({
       srcIp: s.localIp,
       dstIp: s.remoteIp,
@@ -153,113 +171,198 @@ function createBrowserNetMiddleware (opts) {
     sendFramedIpv4(s.writeFramed, pkt)
   }
 
+  /** @type {WeakMap<import('ws'), Map<number, string>>} */
+  const wsStreamToSession = new WeakMap()
+
+  function detachStreamFromWs (ws, streamId) {
+    const m = wsStreamToSession.get(ws)
+    if (!m) return
+    m.delete(streamId)
+    if (m.size === 0) wsStreamToSession.delete(ws)
+  }
+
   function closeSession (sk, why) {
     const s = sessions.get(sk)
     if (!s || s.state === 'closed') return
+    const pendingOutbound = s.outbound === true && s.state === 'syn_sent' && s.connectRid
+    const rid = s.connectRid
+    const streamId = s.streamId
+    const ws = s.ws
     s.state = 'closed'
     sessions.delete(sk)
-    if (s.ws.readyState === 1) {
+    detachStreamFromWs(ws, streamId)
+    if (ws.readyState === 1) {
       try {
-        s.ws.send(JSON.stringify({ op: 'end', stream: s.streamId, reason: why || 'closed' }))
+        if (pendingOutbound && rid) {
+          ws.send(
+            JSON.stringify({
+              op: 'connect_err',
+              rid,
+              error: String(why || 'closed')
+            })
+          )
+        } else {
+          ws.send(JSON.stringify({ op: 'end', stream: streamId, reason: why || 'closed' }))
+        }
       } catch (_) {}
     }
+  }
+
+  function isPortFree (localIp, port) {
+    const k = listenKey(localIp, port)
+    if (listeners.has(k)) return false
+    for (const s of sessions.values()) {
+      if (s.state === 'closed') continue
+      if (s.localIp === localIp && s.localPort === port) return false
+    }
+    return true
+  }
+
+  function allocateEphemeralPort (localIp) {
+    const lo = 49152
+    const hi = 65535
+    const span = hi - lo + 1
+    const start = lo + (crypto.randomBytes(2).readUInt16BE(0) % span)
+    for (let i = 0; i < span; i++) {
+      const p = lo + ((start - lo + i) % span)
+      if (isPortFree(localIp, p)) return p
+    }
+    return null
+  }
+
+  function ipv4Literal (s) {
+    const t = String(s || '').trim()
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(t)) return null
+    const p = t.split('.').map((x) => Number(x))
+    if (p.some((n) => n > 255)) return null
+    return t
   }
 
   /**
    * @param {Buffer} packet
    * @param {InboundPacketCtx} ctx
-   * @returns {boolean} true if handled here (do not pass-through)
+   * @returns {boolean}
    */
   function tryConsumeInboundPacket (packet, ctx) {
     const parsed = parseIpv4Tcp(packet)
     if (!parsed) return false
 
     const { srcIp, dstIp, srcPort, dstPort, seq, ack, flags, payload } = parsed
-
-    const lk = listenKey(dstIp, dstPort)
-    if (!listeners.has(lk)) return false
-
-    if (!shouldAcceptInboundPacket(packet, ctx)) {
-      return false
-    }
-
     const sk = sessionKey(ctx.peerKeyHex, srcIp, srcPort, dstIp, dstPort)
     let s = sessions.get(sk)
 
-    if (flags & FLAG_RST) {
-      if (s) closeSession(sk, 'rst')
-      return true
-    }
+    if (s) {
+      if (!shouldAcceptInboundPacket(packet, ctx)) return false
 
-    if (s && s.state === 'syn_rcvd') {
-      if (flags & FLAG_ACK && !(flags & FLAG_SYN)) {
-        const expectAck = (s.synOurIsn + 1) >>> 0
-        if (ack === expectAck) {
+      if (flags & FLAG_RST) {
+        closeSession(sk, 'rst')
+        return true
+      }
+
+      if (s.state === 'syn_sent' && s.outbound) {
+        if ((flags & FLAG_SYN) && (flags & FLAG_ACK)) {
+          if (ack !== ((s.synOurIsn + 1) >>> 0)) return true
+          s.peerIsn = seq >>> 0
+          s.recvNext = (s.peerIsn + 1) >>> 0
+          sendTcp(s, FLAG_ACK, Buffer.alloc(0))
           s.state = 'established'
-          try {
-            s.ws.send(
-              JSON.stringify({
-                op: 'accept',
-                stream: s.streamId,
-                local: { ip: s.localIp, port: s.localPort },
-                remote: { ip: s.remoteIp, port: s.remotePort }
-              })
-            )
-          } catch (_) {}
-        }
-        return true
-      }
-      if (flags & FLAG_SYN && !(flags & FLAG_ACK)) {
-        const pkt = buildIpv4TcpPacket({
-          srcIp: s.localIp,
-          dstIp: s.remoteIp,
-          srcPort: s.localPort,
-          dstPort: s.remotePort,
-          seq: s.synOurIsn,
-          ack: (s.peerIsn + 1) >>> 0,
-          flags: FLAG_SYN | FLAG_ACK
-        })
-        sendFramedIpv4(s.writeFramed, pkt)
-        return true
-      }
-    }
-
-    if (s && s.state === 'established') {
-      if (flags & FLAG_FIN) {
-        if (seq !== s.recvNext) return true
-        s.recvNext = (s.recvNext + 1) >>> 0
-        sendTcp(s, FLAG_FIN, Buffer.alloc(0))
-        closeSession(sk, 'fin')
-        return true
-      }
-      if (payload.length > 0) {
-        if (seq !== s.recvNext) {
+          if (s.ws.readyState === 1 && s.connectRid) {
+            try {
+              s.ws.send(
+                JSON.stringify({
+                  op: 'connected',
+                  rid: s.connectRid,
+                  stream: s.streamId,
+                  local: { ip: s.localIp, port: s.localPort },
+                  remote: { ip: s.remoteIp, port: s.remotePort }
+                })
+              )
+            } catch (_) {}
+            s.connectRid = undefined
+          }
           return true
         }
-        s.recvNext = (s.recvNext + payload.length) >>> 0
-        sendTcp(s, FLAG_ACK, Buffer.alloc(0))
-        if (s.ws.readyState === 1) {
-          const hdr = Buffer.allocUnsafe(5)
-          hdr[0] = BIN_TAG
-          hdr.writeUInt32BE(s.streamId >>> 0, 1)
-          try {
-            s.ws.send(Buffer.concat([hdr, payload]), { binary: true })
-          } catch (_) {}
+        return true
+      }
+
+      if (s.state === 'syn_rcvd') {
+        if (flags & FLAG_ACK && !(flags & FLAG_SYN)) {
+          const expectAck = (s.synOurIsn + 1) >>> 0
+          if (ack === expectAck) {
+            s.state = 'established'
+            try {
+              s.ws.send(
+                JSON.stringify({
+                  op: 'accept',
+                  stream: s.streamId,
+                  local: { ip: s.localIp, port: s.localPort },
+                  remote: { ip: s.remoteIp, port: s.remotePort }
+                })
+              )
+            } catch (_) {}
+          }
+          return true
+        }
+        if (flags & FLAG_SYN && !(flags & FLAG_ACK)) {
+          const pkt = buildIpv4TcpPacket({
+            srcIp: s.localIp,
+            dstIp: s.remoteIp,
+            srcPort: s.localPort,
+            dstPort: s.remotePort,
+            seq: s.synOurIsn,
+            ack: (s.peerIsn + 1) >>> 0,
+            flags: tcpFlagsWithAck(FLAG_SYN | FLAG_ACK)
+          })
+          sendFramedIpv4(s.writeFramed, pkt)
+          return true
+        }
+      }
+
+      if (s.state === 'established') {
+        if (flags & FLAG_FIN) {
+          if (seq !== s.recvNext) return true
+          s.recvNext = (s.recvNext + 1) >>> 0
+          sendTcp(s, FLAG_FIN, Buffer.alloc(0))
+          closeSession(sk, 'fin')
+          return true
+        }
+        if (payload.length > 0) {
+          if (seq !== s.recvNext) return true
+          s.recvNext = (s.recvNext + payload.length) >>> 0
+          sendTcp(s, FLAG_ACK, Buffer.alloc(0))
+          if (s.ws.readyState === 1) {
+            const hdr = Buffer.allocUnsafe(5)
+            hdr[0] = BIN_TAG
+            hdr.writeUInt32BE(s.streamId >>> 0, 1)
+            try {
+              s.ws.send(Buffer.concat([hdr, payload]), { binary: true })
+            } catch (_) {}
+          }
+          return true
         }
         return true
       }
+
       return true
     }
 
-    if (!s && flags & FLAG_SYN && !(flags & FLAG_ACK)) {
+    if (flags & FLAG_RST) return false
+
+    if (!shouldAcceptInboundPacket(packet, ctx)) return false
+
+    if (flags & FLAG_SYN && !(flags & FLAG_ACK)) {
+      const lk = listenKey(dstIp, dstPort)
+      if (!listeners.has(lk)) return false
+
       const rec = listeners.get(lk)
       if (!rec || rec.ws.readyState !== 1) return true
 
       const peerIsn = seq
       const synOurIsn = crypto.randomBytes(4).readUInt32BE(0) >>> 0
       const streamId = nextStreamIdFor(rec.ws)
-      s = {
+      const inbound = {
         peerKeyHex: ctx.peerKeyHex,
+        peerAliasIp: ctx.peerAliasIp,
         remoteIp: srcIp,
         localIp: dstIp,
         remotePort: srcPort,
@@ -271,10 +374,11 @@ function createBrowserNetMiddleware (opts) {
         state: 'syn_rcvd',
         ws: rec.ws,
         streamId,
-        writeFramed: ctx.writeFramed
+        writeFramed: ctx.writeFramed,
+        outbound: false
       }
-      sessions.set(sk, s)
-      attachStreamToWs(rec.ws, sk, s)
+      sessions.set(sk, inbound)
+      attachStreamToWs(rec.ws, sk, inbound)
 
       const synAck = buildIpv4TcpPacket({
         srcIp: dstIp,
@@ -283,28 +387,20 @@ function createBrowserNetMiddleware (opts) {
         dstPort: srcPort,
         seq: synOurIsn,
         ack: (peerIsn + 1) >>> 0,
-        flags: FLAG_SYN | FLAG_ACK
+        flags: tcpFlagsWithAck(FLAG_SYN | FLAG_ACK)
       })
       sendFramedIpv4(ctx.writeFramed, synAck)
       return true
     }
 
-    return true
+    return false
   }
-
-  /** @type {WeakMap<import('ws'), Map<number, string>>} */
-  const wsStreamToSession = new WeakMap()
 
   function nextStreamIdFor (ws) {
     ws._browserNetNextId = (ws._browserNetNextId || 1) >>> 0
     return ws._browserNetNextId++ >>> 0
   }
 
-  /**
-   * @param {import('ws')} ws
-   * @param {string} sk
-   * @param {TcpSession} s
-   */
   function attachStreamToWs (ws, sk, s) {
     let m = wsStreamToSession.get(ws)
     if (!m) {
@@ -314,11 +410,6 @@ function createBrowserNetMiddleware (opts) {
     m.set(s.streamId, sk)
   }
 
-  /**
-   * @param {import('ws')} ws
-   * @param {number} streamId
-   * @param {Buffer} payload
-   */
   function browserData (ws, streamId, payload) {
     const m = wsStreamToSession.get(ws)
     if (!m) return
@@ -328,10 +419,6 @@ function createBrowserNetMiddleware (opts) {
     sendTcp(s, FLAG_PSH | FLAG_ACK, payload)
   }
 
-  /**
-   * @param {import('ws')} ws
-   * @param {number} streamId
-   */
   function browserEnd (ws, streamId) {
     const m = wsStreamToSession.get(ws)
     if (!m) return
@@ -345,7 +432,7 @@ function createBrowserNetMiddleware (opts) {
   function cleanupWs (ws) {
     const m = wsStreamToSession.get(ws)
     if (m) {
-      for (const sk of m.values()) {
+      for (const sk of new Set(m.values())) {
         const s = sessions.get(sk)
         if (s && s.state !== 'closed') sendRst(s)
         closeSession(sk, 'ws_close')
@@ -378,6 +465,141 @@ function createBrowserNetMiddleware (opts) {
         try {
           ws.send(JSON.stringify({ op: 'hello_ok', v: 1 }))
         } catch (_) {}
+        return
+      }
+      if (op === 'connect') {
+        const rid = msg.rid
+        if (!getOutboundRoute) {
+          try {
+            ws.send(
+              JSON.stringify({
+                op: 'connect_err',
+                rid,
+                error: 'connect not configured (getOutboundRoute missing)'
+              })
+            )
+          } catch (_) {}
+          return
+        }
+        const port = Number(msg.port)
+        if (!Number.isFinite(port) || port < 1 || port > 65535) {
+          try {
+            ws.send(
+              JSON.stringify({ op: 'connect_err', rid, error: 'bad port' })
+            )
+          } catch (_) {}
+          return
+        }
+        const hostRaw =
+          msg.host != null && String(msg.host).trim() !== ''
+            ? String(msg.host).trim()
+            : ''
+        if (!hostRaw) {
+          try {
+            ws.send(
+              JSON.stringify({ op: 'connect_err', rid, error: 'host required' })
+            )
+          } catch (_) {}
+          return
+        }
+        let remoteIp = ipv4Literal(hostRaw)
+        if (!remoteIp && resolveConnectHost) {
+          remoteIp = resolveConnectHost(hostRaw) || null
+        }
+        if (!remoteIp) {
+          try {
+            ws.send(
+              JSON.stringify({
+                op: 'connect_err',
+                rid,
+                error: 'unknown remote host (use IPv4 or configure resolveConnectHost)'
+              })
+            )
+          } catch (_) {}
+          return
+        }
+        const route = getOutboundRoute(remoteIp)
+        if (!route || typeof route.writeFramed !== 'function') {
+          try {
+            ws.send(
+              JSON.stringify({
+                op: 'connect_err',
+                rid,
+                error: 'no route to host (offline or unroutable)'
+              })
+            )
+          } catch (_) {}
+          return
+        }
+        const primary = getDefaultListenIpv4()
+        const rawLocal =
+          msg.localHost != null && String(msg.localHost).trim() !== ''
+            ? String(msg.localHost).trim()
+            : null
+        let localIp = null
+        if (rawLocal == null) {
+          localIp = primary || null
+        } else if (resolveListenHost) {
+          localIp = resolveListenHost(rawLocal) || ipv4Literal(rawLocal)
+        } else {
+          localIp = ipv4Literal(rawLocal)
+          if (localIp && primary && localIp !== primary) localIp = null
+        }
+        if (!localIp) {
+          try {
+            ws.send(
+              JSON.stringify({
+                op: 'connect_err',
+                rid,
+                error: MSG_DEFAULT_LISTEN
+              })
+            )
+          } catch (_) {}
+          return
+        }
+        const localPort = allocateEphemeralPort(localIp)
+        if (localPort == null) {
+          try {
+            ws.send(
+              JSON.stringify({
+                op: 'connect_err',
+                rid,
+                error: 'no ephemeral port available'
+              })
+            )
+          } catch (_) {}
+          return
+        }
+        const synOurIsn = crypto.randomBytes(4).readUInt32BE(0) >>> 0
+        const streamId = nextStreamIdFor(ws)
+        const sk = sessionKey(
+          route.peerKeyHex,
+          remoteIp,
+          port,
+          localIp,
+          localPort
+        )
+        const out = {
+          peerKeyHex: route.peerKeyHex,
+          peerAliasIp: route.peerAliasIp,
+          remoteIp,
+          localIp,
+          remotePort: port,
+          localPort,
+          peerIsn: 0,
+          synOurIsn,
+          sendNext: synOurIsn >>> 0,
+          recvNext: 0,
+          state: 'syn_sent',
+          ws,
+          streamId,
+          writeFramed: route.writeFramed,
+          outbound: true,
+          connectRid: rid
+        }
+        sessions.set(sk, out)
+        attachStreamToWs(ws, sk, out)
+        sendTcp(out, FLAG_SYN, Buffer.alloc(0))
         return
       }
       if (op === 'listen') {
@@ -489,9 +711,6 @@ function createBrowserNetMiddleware (opts) {
     })
   }
 
-  /**
-   * @param {import('http').Server} server
-   */
   function attachToHttpServer (server) {
     const wss = new WebSocketServer({ noServer: true })
     const pathNorm = webSocketPath.startsWith('/') ? webSocketPath : `/${webSocketPath}`
@@ -528,6 +747,7 @@ function createBrowserNetMiddleware (opts) {
       streamList.push({
         stream: s.streamId,
         state: s.state,
+        outbound: !!s.outbound,
         peerKeyHex: s.peerKeyHex,
         local: { ip: s.localIp, port: s.localPort },
         remote: { ip: s.remoteIp, port: s.remotePort }

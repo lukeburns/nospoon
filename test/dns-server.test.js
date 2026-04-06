@@ -77,6 +77,56 @@ describe('dns-server', function () {
 
     await server.stop()
   })
+
+  it('CID-shaped hostname: A uses resolveCidGatewayA', async function () {
+    const cidLabel = 'b' + 'y'.repeat(51)
+    const port = await findFreePort()
+    const server = createDnsServer({
+      port,
+      lookupManual: () => null,
+      resolveMeshA: () => null,
+      resolveCidGatewayA: () => '10.8.0.1',
+      forward: false
+    })
+    await server.start()
+
+    const res = await queryDns(port, {
+      type: 'query',
+      id: 0x1111,
+      questions: [{ type: 'A', name: cidLabel }]
+    })
+
+    assert.equal(res.rcode, 'NOERROR')
+    assert.equal(res.answers.length, 1)
+    assert.equal(res.answers[0].type, 'A')
+    assert.equal(res.answers[0].data, '10.8.0.1')
+
+    await server.stop()
+  })
+
+  it('CID-shaped hostname: AAAA returns NODATA', async function () {
+    const cidLabel = 'b' + 'z'.repeat(51)
+    const port = await findFreePort()
+    const server = createDnsServer({
+      port,
+      lookupManual: () => null,
+      resolveMeshA: () => null,
+      resolveCidGatewayA: () => '10.8.0.2',
+      forward: false
+    })
+    await server.start()
+
+    const res = await queryDns(port, {
+      type: 'query',
+      id: 0x2222,
+      questions: [{ type: 'AAAA', name: cidLabel }]
+    })
+
+    assert.equal(res.rcode, 'NOERROR')
+    assert.equal(res.answers.length, 0)
+
+    await server.stop()
+  })
 })
 
 function findFreePort () {

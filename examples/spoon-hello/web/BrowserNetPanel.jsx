@@ -246,9 +246,10 @@ export function BrowserNetPanel ({
           Stop
         </button>
       </p>
-      <p><strong>From peers</strong></p>
+      <span className="section-label">From peers</span>
       <pre className="from-peers">{fromPeers}</pre>
-      <p><strong>To peers</strong> (type here — broadcast to every session)</p>
+      <span className="section-label">To peers</span>
+      <p className="field-hint">Broadcast to every connected session.</p>
       <textarea
         className="to-peers"
         rows={4}
@@ -257,7 +258,7 @@ export function BrowserNetPanel ({
         value={toPeers}
         onChange={(e) => onToPeersInput(e.target.value)}
       />
-      <p><strong>Log</strong></p>
+      <span className="section-label">Log</span>
       <pre className="log">{log}</pre>
     </section>
   )

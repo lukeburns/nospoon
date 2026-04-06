@@ -11,11 +11,11 @@
  * - {@link createServer} / {@link Server} — `listen(port[, host][, cb])`, emit `'connection'` with a {@link Socket}
  * - {@link Socket} — `stream.Duplex`; `remoteAddress`, `remotePort`, `localAddress`, `localPort`;
  *   `setEncoding`, `setTimeout` / `setNoDelay` / `setKeepAlive` (mostly no-ops)
+ * - {@link createConnection} / {@link connect} — Node argument shapes; buffers writes until the
+ *   WebSocket `connect` handshake completes, then emits `'connect'`
  * - {@link defaultBrowserNetWsUrl} — derive WS URL from `location` when not using `setBrowserNetProxy`
  *
- * **Not implemented:** {@link createConnection} / {@link connect} (needs middleware `connect` op).
- *
- * **Lower-level:** `browser-net-client` exports `BrowserNetServer`, `BrowserNetSocket`, same helpers.
+ * **Lower-level:** `browser-net-client` exports `BrowserNetServer`, `BrowserNetSocket`, `browserNetConnect`.
  */
 
 import { Duplex } from 'stream'
@@ -24,6 +24,7 @@ import { StringDecoder } from 'string_decoder'
 import {
   BrowserNetServer,
   BrowserNetSocket,
+  browserNetConnect,
   setBrowserNetProxy,
   defaultBrowserNetWsUrl,
   getBrowserNetProxyOverride
@@ -141,6 +142,225 @@ export class Socket extends Duplex {
   }
 }
 
+/**
+ * Outbound TCP client: wraps {@link browserNetConnect} in a Node-shaped `Duplex` with `connecting`
+ * and buffered writes until the mesh middleman completes the handshake.
+ */
+class ConnectingSocket extends Duplex {
+  /**
+   * @param {{ port: number, host: string, localHost?: string, url?: string, location?: Location }} opts
+   */
+  constructor (opts) {
+    super({ allowHalfOpen: false })
+    this.connecting = true
+    this.remoteAddress = undefined
+    this.remotePort = undefined
+    this.localAddress = undefined
+    this.localPort = undefined
+    /** @private @type {string | null} */
+    this._pendingEncoding = null
+    /** @private @type {Socket | null} */
+    this._wrapped = null
+    /** @private */
+    this._pendingWrites = []
+    /** @private @type {((err?: Error) => void) | null} */
+    this._pendingFinal = null
+
+    const self = this
+    browserNetConnect({
+      port: opts.port,
+      host: opts.host,
+      localHost: opts.localHost,
+      url: opts.url,
+      location: opts.location
+    }).then(
+      function (inner) {
+        if (self.destroyed) {
+          try {
+            inner.end()
+          } catch (_) {}
+          return
+        }
+        self._attach(inner)
+      },
+      function (err) {
+        self.connecting = false
+        const e = err instanceof Error ? err : new Error(String(err))
+        for (const row of self._pendingWrites) {
+          const cbWrite = row[2]
+          if (typeof cbWrite === 'function') queueMicrotask(() => cbWrite(e))
+        }
+        self._pendingWrites = []
+        if (self._pendingFinal != null) {
+          const f = self._pendingFinal
+          self._pendingFinal = null
+          queueMicrotask(() => f(e))
+        }
+        queueMicrotask(function () {
+          self.emit('error', e)
+          self.destroy(e)
+        })
+      }
+    )
+  }
+
+  /** @param {import('../lib/browser-net-client.js').BrowserNetSocket} inner */
+  _attach (inner) {
+    const wrapped = new Socket(inner)
+    this._wrapped = wrapped
+    this.remoteAddress = wrapped.remoteAddress
+    this.remotePort = wrapped.remotePort
+    this.localAddress = wrapped.localAddress
+    this.localPort = wrapped.localPort
+
+    if (this._pendingEncoding != null) {
+      wrapped.setEncoding(this._pendingEncoding)
+      this._pendingEncoding = null
+    }
+
+    const onData = (chunk) => {
+      if (!this.destroyed) this.push(chunk)
+    }
+    const onEnd = () => {
+      if (!this.destroyed) this.push(null)
+    }
+    const onClose = () => {
+      if (!this.destroyed) this.destroy()
+    }
+    wrapped.on('data', onData)
+    wrapped.on('end', onEnd)
+    wrapped.on('close', onClose)
+    this.once('close', () => {
+      wrapped.removeListener('data', onData)
+      wrapped.removeListener('end', onEnd)
+      wrapped.removeListener('close', onClose)
+    })
+
+    for (const row of this._pendingWrites) {
+      wrapped.write(row[0], row[1], row[2])
+    }
+    this._pendingWrites = []
+    if (this._pendingFinal != null) {
+      const f = this._pendingFinal
+      this._pendingFinal = null
+      wrapped.end(() => queueMicrotask(() => f()))
+    }
+
+    this.connecting = false
+    queueMicrotask(() => this.emit('connect'))
+  }
+
+  /** @param {BufferEncoding} encoding */
+  setEncoding (encoding) {
+    if (this._wrapped) {
+      this._wrapped.setEncoding(encoding)
+    } else {
+      this._pendingEncoding = encoding || null
+    }
+    return this
+  }
+
+  setTimeout (msecs, callback) {
+    if (this._wrapped) return this._wrapped.setTimeout(msecs, callback)
+    if (typeof callback === 'function') {
+      setTimeout(callback, Number(msecs) || 0)
+    }
+    return this
+  }
+
+  setNoDelay () {
+    return this
+  }
+
+  setKeepAlive () {
+    return this
+  }
+
+  /**
+   * @param {Buffer | string | Uint8Array} chunk
+   * @param {BufferEncoding} [encoding]
+   * @param {(err?: Error) => void} callback
+   */
+  _write (chunk, encoding, callback) {
+    if (this._wrapped) {
+      return this._wrapped.write(chunk, encoding, callback)
+    }
+    this._pendingWrites.push([chunk, encoding, callback])
+  }
+
+  /**
+   * @param {(err?: Error) => void} callback
+   */
+  _final (callback) {
+    if (this._wrapped) {
+      this._wrapped.end(() => queueMicrotask(() => callback()))
+      return
+    }
+    this._pendingFinal = callback
+  }
+
+  /**
+   * @param {Error} [err]
+   * @param {(err?: Error) => void} callback
+   */
+  _destroy (err, callback) {
+    if (this._wrapped) {
+      try {
+        this._wrapped.destroy(err)
+      } catch (_) {}
+    } else {
+      const e = err || new Error('Socket closed before connect')
+      for (const row of this._pendingWrites) {
+        const cbWrite = row[2]
+        if (typeof cbWrite === 'function') queueMicrotask(() => cbWrite(e))
+      }
+      this._pendingWrites = []
+      if (this._pendingFinal != null) {
+        const f = this._pendingFinal
+        this._pendingFinal = null
+        queueMicrotask(() => f(e))
+      }
+    }
+    callback(err)
+  }
+}
+
+/**
+ * @param {number | object} portOrOpts
+ * @param {string | function(): void} [hostOrCb]
+ * @param {function(): void} [cb]
+ * @returns {{ port: number, host: string, localHost?: string, url?: string, location?: Location, cb?: function(): void }}
+ */
+function normalizeConnectArgs (portOrOpts, hostOrCb, cb) {
+  if (portOrOpts != null && typeof portOrOpts === 'object' && !Array.isArray(portOrOpts)) {
+    const o = portOrOpts
+    if (o.path != null) {
+      throw new Error('net: IPC path connections are not supported in the browser shim')
+    }
+    if (o.port == null) {
+      throw new TypeError('connect options must include port')
+    }
+    return {
+      port: Number(o.port),
+      host: o.host != null ? String(o.host) : '127.0.0.1',
+      localHost: o.localAddress != null ? String(o.localAddress) : undefined,
+      url: o.url,
+      location: o.location,
+      cb: typeof hostOrCb === 'function' ? hostOrCb : undefined
+    }
+  }
+  const port = Number(portOrOpts)
+  let host = '127.0.0.1'
+  let callback
+  if (typeof hostOrCb === 'string') {
+    host = hostOrCb
+    callback = typeof cb === 'function' ? cb : undefined
+  } else {
+    callback = typeof hostOrCb === 'function' ? hostOrCb : undefined
+  }
+  return { port, host, cb: callback }
+}
+
 export class Server extends EventEmitter {
   /**
    * @param {object | function(import('net').Socket): void} [optionsOrListener]
@@ -232,13 +452,26 @@ export function createServer (optionsOrListener, connectionListener) {
   return new Server(optionsOrListener, connectionListener)
 }
 
-export function createConnection () {
-  throw new Error(
-    'net.createConnection is not implemented yet (needs proxy `connect` op + outbound SYN)'
-  )
+/**
+ * @param {number | object} portOrOpts
+ * @param {string | function(): void} [hostOrCb]
+ * @param {function(): void} [cb]
+ * @returns {ConnectingSocket}
+ */
+export function createConnection (portOrOpts, hostOrCb, cb) {
+  const args = normalizeConnectArgs(portOrOpts, hostOrCb, cb)
+  if (!Number.isFinite(args.port) || args.port < 1 || args.port > 65535) {
+    throw new RangeError('port must be a valid TCP port (1-65535)')
+  }
+  const { cb: connectCb, ...connOpts } = args
+  const sock = new ConnectingSocket(connOpts)
+  if (typeof connectCb === 'function') sock.once('connect', connectCb)
+  return sock
 }
 
-export const connect = createConnection
+export function connect (portOrOpts, hostOrCb, cb) {
+  return createConnection(portOrOpts, hostOrCb, cb)
+}
 
 /** @deprecated Use Socket */
 export const Stream = Socket

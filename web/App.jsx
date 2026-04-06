@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import z32 from 'z32'
 
 const emptyStatus = {
@@ -28,6 +28,17 @@ const emptyStatus = {
       ipv4: null,
       httpPort: 80,
       lastError: null
+    },
+    ipfsDweb: {
+      enabled: true,
+      mode: 'helia',
+      dataDir: '',
+      externalGatewayUrl: 'http://127.0.0.1:8080',
+      listening: false,
+      ipv4: null,
+      httpPort: 80,
+      lastError: null,
+      canUpload: false
     }
   }
 }
@@ -61,6 +72,13 @@ async function patchJson (url, body) {
     body: JSON.stringify(body || {})
   })
   return readJson(res)
+}
+
+/** http://(cid)/ for the DNS dweb gateway. Avoid new URL / hostname setter — it lowercases hosts and breaks case-sensitive base58 CIDs (Qm…). */
+function cidToDwebHttpHref (cid) {
+  const c = String(cid || '').trim()
+  if (!c) return '#'
+  return encodeURI('http://' + c + '/')
 }
 
 async function postMeshReservation (body) {
@@ -588,6 +606,389 @@ function PrimaryInterfaceCard ({
   )
 }
 
+/**
+ * @param {{ ipfs: object, dnsEnabled: boolean, dnsListening: boolean, onApplied?: function(object): void }} props
+ */
+function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
+  const i = ipfs || emptyStatus.dns.ipfsDweb
+  const uploadInputRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [seeds, setSeeds] = useState([])
+  const [seedsLoading, setSeedsLoading] = useState(false)
+  const [seedsErr, setSeedsErr] = useState(null)
+  const [unseedingCid, setUnseedingCid] = useState(null)
+  const [en, setEn] = useState(true)
+  const [mode, setMode] = useState('helia')
+  const [gateway, setGateway] = useState('http://127.0.0.1:8080')
+  const [dataDir, setDataDir] = useState('')
+
+  useEffect(
+    function () {
+      if (!ipfs) return
+      setEn(ipfs.enabled !== false)
+      setMode(ipfs.mode === 'external' ? 'external' : 'helia')
+      setGateway(ipfs.externalGatewayUrl || 'http://127.0.0.1:8080')
+      setDataDir(ipfs.dataDir || '')
+    },
+    [ipfs]
+  )
+
+  const loadSeeds = useCallback(function () {
+    if (i.mode !== 'helia' || !i.canUpload) {
+      setSeeds([])
+      setSeedsErr(null)
+      return
+    }
+    setSeedsLoading(true)
+    setSeedsErr(null)
+    fetch('/api/ipfs/seeds')
+      .then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error(j.error || String(r.status))
+          return j
+        })
+      })
+      .then(function (j) {
+        setSeeds(Array.isArray(j.seeds) ? j.seeds : [])
+      })
+      .catch(function (err) {
+        setSeedsErr(err.message || String(err))
+        setSeeds([])
+      })
+      .finally(function () {
+        setSeedsLoading(false)
+      })
+  }, [i.mode, i.canUpload])
+
+  useEffect(
+    function () {
+      loadSeeds()
+    },
+    [loadSeeds]
+  )
+
+  const apply = useCallback(
+    function (e) {
+      e.preventDefault()
+      setBusy(true)
+      setMsg(null)
+      patchJson('/api/ipfs', {
+        enabled: en,
+        mode,
+        externalGatewayUrl: gateway.trim(),
+        dataDir: dataDir.trim()
+      })
+        .then(function (j) {
+          if (typeof onApplied === 'function') onApplied(j)
+          setMsg({ kind: 'ok', text: 'IPFS settings applied.' })
+          window.setTimeout(function () {
+            setMsg(null)
+          }, 2200)
+        })
+        .catch(function (err) {
+          setMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setBusy(false)
+        })
+    },
+    [en, mode, gateway, dataDir, onApplied]
+  )
+
+  const uploadFile = useCallback(
+    function (e) {
+      e.preventDefault()
+      const input = uploadInputRef.current
+      const file = input && input.files && input.files[0]
+      if (!file) {
+        setMsg({ kind: 'err', text: 'Choose a file first.' })
+        return
+      }
+      setUploadBusy(true)
+      setMsg(null)
+      const url = '/api/ipfs/add?filename=' + encodeURIComponent(file.name)
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file
+      })
+        .then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error(j.error || String(r.status))
+            return j
+          })
+        })
+        .then(function (j) {
+          if (input) input.value = ''
+          loadSeeds()
+          return fetch('/api/ipfs').then(function (r) {
+            return r.json()
+          })
+        })
+        .then(function (st) {
+          if (typeof onApplied === 'function') onApplied(st)
+          setMsg({
+            kind: 'ok',
+            text: 'Stored in local Helia; other peers can fetch blocks as your node advertises them.'
+          })
+          window.setTimeout(function () {
+            setMsg(null)
+          }, 3800)
+        })
+        .catch(function (err) {
+          setMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setUploadBusy(false)
+        })
+    },
+    [onApplied, loadSeeds]
+  )
+
+  const unseed = useCallback(
+    function (cid) {
+      setUnseedingCid(cid)
+      setMsg(null)
+      fetch('/api/ipfs/seeds?cid=' + encodeURIComponent(cid), { method: 'DELETE' })
+        .then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error(j.error || String(r.status))
+            return j
+          })
+        })
+        .then(function () {
+          loadSeeds()
+          if (typeof onApplied === 'function') {
+            return fetch('/api/ipfs').then(function (r) {
+              return r.json()
+            })
+          }
+          return null
+        })
+        .then(function (st) {
+          if (st && typeof onApplied === 'function') onApplied(st)
+        })
+        .catch(function (err) {
+          setMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setUnseedingCid(null)
+        })
+    },
+    [loadSeeds, onApplied]
+  )
+
+  let stateLabel = '—'
+  let stateClass = 'dim'
+  if (i.enabled === false) {
+    stateLabel = 'Disabled'
+    stateClass = 'dim'
+  } else if (i.lastError) {
+    stateLabel = 'Error'
+    stateClass = 'bad'
+  } else if (i.listening) {
+    stateLabel = 'Listening'
+    stateClass = 'ok'
+  } else {
+    stateLabel = 'Off or starting'
+    stateClass = 'dim'
+  }
+
+  return (
+    <div className="card interface-card ipfs-gateway-card">
+      <div className="interface-card-head">
+        <span className="interface-card-title">
+          <strong>IPFS</strong>
+          {' · '}
+          <span className={'ipfs-gateway-state ' + stateClass}>{stateLabel}</span>
+        </span>
+      </div>
+      <div className="policy-controls">
+        {!dnsEnabled || !dnsListening ? (
+          <p className="form-status err" role="alert">
+            Turn on the DNS server (above) and ensure it is listening so CID hostnames resolve to this
+            gateway.
+          </p>
+        ) : null}
+        <div className="ipfs-status-grid">
+          <div className="ipfs-status-row">
+            <span className="dim">HTTP</span>
+            <span>
+              port {i.httpPort ?? 80}
+              {i.ipv4 ? (
+                <>
+                  {' '}
+                  on <code className="ipfs-bind-ip">{i.ipv4}</code>
+                </>
+              ) : (
+                <span className="dim"> — </span>
+              )}
+            </span>
+          </div>
+          <div className="ipfs-status-row">
+            <span className="dim">Backend</span>
+            <span>
+              {i.mode === 'external' ? (
+                <>
+                  External gateway{' '}
+                  <code className="ipfs-config-detail">{i.externalGatewayUrl || '—'}</code>
+                </>
+              ) : (
+                <>
+                  Embedded Helia —{' '}
+                  <code className="ipfs-config-detail" title={i.dataDir || ''}>
+                    {i.dataDir || '~/.nospoon/helia'}
+                  </code>
+                </>
+              )}
+            </span>
+          </div>
+          {i.lastError ? (
+            <p className="form-status err ipfs-status-err" role="alert">
+              {i.lastError}
+            </p>
+          ) : null}
+        </div>
+        <p className="policy-blurb dim meta-tight">
+          DNS answers <code>A</code> for multibase CID labels (e.g. <code>bafy…</code>) to this address.
+          Browsers send <code>Host: &lt;cid&gt;</code>; manual name <code>ipfs</code> points here too.
+        </p>
+        <div className="ipfs-upload-block">
+          <p className="policy-group-head dns-manual-head">Upload / seed locally</p>
+          {i.mode === 'external' ? (
+            <p className="dim meta-tight">
+              Panel upload uses embedded Helia only. For an external gateway, run <code>ipfs add</code> on that
+              machine, or switch backend to Helia above.
+            </p>
+          ) : !i.canUpload ? (
+            <p className="dim meta-tight">
+              Start the gateway (enable IPFS + DNS above); when Helia is ready, upload unlocks.
+            </p>
+          ) : (
+            <form className="ipfs-upload-form" onSubmit={uploadFile}>
+              <label className="ipfs-upload-label">
+                <span className="dim">File</span>
+                <input ref={uploadInputRef} type="file" disabled={uploadBusy} />
+              </label>
+              <button type="submit" disabled={uploadBusy}>
+                {uploadBusy ? 'Uploading…' : 'Upload'}
+              </button>
+            </form>
+          )}
+          {i.mode === 'helia' && i.canUpload ? (
+            <div className="ipfs-seeds-block">
+              <p className="policy-group-head dns-manual-head">Local seeds (pinned roots)</p>
+              {seedsLoading ? (
+                <p className="dim meta-tight">Loading…</p>
+              ) : seedsErr ? (
+                <p className="form-status err meta-tight" role="alert">
+                  {seedsErr}
+                </p>
+              ) : seeds.length === 0 ? (
+                <p className="dim meta-tight">No pinned roots yet. Upload a file above to seed it.</p>
+              ) : (
+                <ul className="ipfs-recent-adds ipfs-seeds-list">
+                  {seeds.map(function (row) {
+                    const href = cidToDwebHttpHref(row.cid)
+                    const name = row.filename || '—'
+                    return (
+                      <li key={row.cid}>
+                        <a className="ipfs-recent-cid" href={href} title={href}>
+                          <code>{row.cid}</code>
+                        </a>
+                        <span className="dim ipfs-recent-name">{name}</span>
+                        <button
+                          type="button"
+                          className="small ipfs-unseed-btn"
+                          disabled={unseedingCid != null}
+                          onClick={function () {
+                            unseed(row.cid)
+                          }}
+                        >
+                          {unseedingCid === row.cid ? '…' : 'Unseed'}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
+        {msg ? (
+          <p
+            className={'form-status ' + (msg.kind === 'err' ? 'err' : 'ok')}
+            role={msg.kind === 'err' ? 'alert' : undefined}
+          >
+            {msg.text}
+          </p>
+        ) : null}
+        <form className="dns-settings-form ipfs-settings-form" onSubmit={apply}>
+          <p className="policy-group-head dns-manual-head">Configuration</p>
+          <label className="policy-toggle-row dns-toggle-spaced">
+            <span className="policy-toggle-input">
+              <input
+                type="checkbox"
+                checked={Boolean(en)}
+                onChange={function (e) {
+                  setEn(e.target.checked)
+                }}
+                disabled={busy}
+              />
+            </span>
+            <span className="policy-toggle-body">IPFS gateway enabled</span>
+          </label>
+          <label>
+            Backend
+            <select
+              value={mode}
+              onChange={function (e) {
+                setMode(e.target.value)
+              }}
+              disabled={busy}
+            >
+              <option value="helia">Embedded Helia (local blockstore)</option>
+              <option value="external">Existing gateway (HTTP URL)</option>
+            </select>
+          </label>
+          {mode === 'external' ? (
+            <label>
+              Gateway base URL
+              <input
+                value={gateway}
+                onChange={function (e) {
+                  setGateway(e.target.value)
+                }}
+                placeholder="http://127.0.0.1:8080"
+                autoComplete="off"
+                disabled={busy}
+              />
+            </label>
+          ) : (
+            <label>
+              Helia data directory (optional)
+              <input
+                value={dataDir}
+                onChange={function (e) {
+                  setDataDir(e.target.value)
+                }}
+                placeholder="Default: ~/.nospoon/helia"
+                autoComplete="off"
+                disabled={busy}
+              />
+            </label>
+          )}
+          <button type="submit" disabled={busy}>
+            {busy ? 'Applying…' : 'Apply'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function DnsInterfaceCard ({ dns, onPatchDns }) {
   const d = dns || {}
   const [portStr, setPortStr] = useState(String(d.port ?? 53))
@@ -1010,8 +1411,88 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
   )
 }
 
+/** @param {{ data: object | null, error: string | null }} props */
+function BrowserNetProxySection ({ data, error }) {
+  if (error) {
+    return (
+      <p className="dim browser-net-proxy-error" role="alert">
+        Virtual interfaces status: {error}
+      </p>
+    )
+  }
+  if (!data) {
+    return <p className="dim meta-tight">Loading virtual interfaces status…</p>
+  }
+  const ip = data.primaryTunIp || data.defaultListenIpv4
+  const listeners = data.listeners || []
+  const streams = data.streams || []
+  return (
+    <div className="browser-net-proxy-card virtual-interfaces-card">
+      <p className="meta-tight dim">
+        Default mesh bind IP for <code>listen()</code> (no host):{' '}
+        <strong className="browser-net-ip">{ip || '—'}</strong>
+      </p>
+      <div className="policy-group browser-net-group">
+        <p className="policy-group-head">Virtual listeners</p>
+        <p className="meta-tight dim browser-net-blurb">
+          <code>host:port</code> sockets forwarded to a browser tab over the WebSocket proxy (one registration per address).
+        </p>
+        {listeners.length === 0 ? (
+          <p className="dim meta-tight">(none — use browser-net <code>listen</code> from a page)</p>
+        ) : (
+          <ul className="browser-net-list">
+            {listeners.map(function (row, i) {
+              return (
+                <li key={i} className="browser-net-list-row">
+                  <code className="browser-net-addr">
+                    {row.bind}:{row.port}
+                  </code>
+                  <span className="dim browser-net-cid" title={row.clientId}>
+                    tab {row.clientId ? row.clientId.slice(0, 8) + '…' : '—'}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      <div className="policy-group browser-net-group">
+        <p className="policy-group-head">Active streams</p>
+        {streams.length === 0 ? (
+          <p className="dim meta-tight">(no proxied TCP sessions)</p>
+        ) : (
+          <ul className="browser-net-streams">
+            {streams.map(function (s, si) {
+              const loc = s.local
+                ? `${s.local.ip}:${s.local.port}`
+                : '—'
+              const rem = s.remote
+                ? `${s.remote.ip}:${s.remote.port}`
+                : '—'
+              const dir = s.outbound ? 'out' : 'in'
+              return (
+                <li key={si} className="browser-net-stream-row">
+                  <span className="browser-net-stream-dir" title={dir === 'out' ? 'Outbound' : 'Inbound'}>
+                    {dir}
+                  </span>
+                  <code className="browser-net-stream-addr">{loc}</code>
+                  <span className="dim">↔</span>
+                  <code className="browser-net-stream-addr">{rem}</code>
+                  <span className="dim browser-net-stream-state">{s.state || '—'}</span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function App () {
   const [status, setStatus] = useState(null)
+  const [browserNetStatus, setBrowserNetStatus] = useState(null)
+  const [browserNetError, setBrowserNetError] = useState(null)
   const [sseState, setSseState] = useState('connecting')
   const [topicBusy, setTopicBusy] = useState(false)
   const [topicMsg, setTopicMsg] = useState(null)
@@ -1035,6 +1516,34 @@ export default function App () {
     }
     es.onerror = () => setSseState('error')
     return () => es.close()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    function fetchBrowserNet () {
+      fetch('/api/browser-net/status')
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status)
+          return r.json()
+        })
+        .then(function (j) {
+          if (!cancelled) {
+            setBrowserNetStatus(j)
+            setBrowserNetError(null)
+          }
+        })
+        .catch(function (e) {
+          if (!cancelled) {
+            setBrowserNetError(e.message || String(e))
+          }
+        })
+    }
+    fetchBrowserNet()
+    const id = window.setInterval(fetchBrowserNet, 2000)
+    return function () {
+      cancelled = true
+      window.clearInterval(id)
+    }
   }, [])
 
   const leaveTopic = useCallback((id) => {
@@ -1151,6 +1660,17 @@ export default function App () {
     })
   }, [])
 
+  const mergeIpfsStatus = useCallback(function (next) {
+    setStatus(function (prev) {
+      const base = prev || emptyStatus
+      const prevDns = base.dns || emptyStatus.dns
+      return {
+        ...base,
+        dns: { ...prevDns, ipfsDweb: next }
+      }
+    })
+  }, [])
+
   const s = status || emptyStatus
   const topics = s.topics || []
   const directPeers = s.directPeers || []
@@ -1194,9 +1714,6 @@ export default function App () {
         dnsEnabled={Boolean(dns.enabled)}
       />
 
-      <h2>DNS interface</h2>
-      <DnsInterfaceCard dns={dns} onPatchDns={patchDns} />
-
       <h2>Topic interfaces</h2>
       <form onSubmit={onTopicSubmit}>
         <label>
@@ -1221,6 +1738,28 @@ export default function App () {
           />
         ))
       )}
+
+      <h2>Virtual interfaces</h2>
+      <p className="meta dim">
+        Virtual TCP listeners and streams bridged to browser tabs via the{' '}
+        <code>/api/browser-net</code> WebSocket (mesh middleman).
+      </p>
+      <BrowserNetProxySection data={browserNetStatus} error={browserNetError} />
+
+      <h2>DNS interface</h2>
+      <DnsInterfaceCard dns={dns} onPatchDns={patchDns} />
+
+      <h2>IPFS gateway</h2>
+      <p className="meta dim">
+        Serves UnixFS by <code>Host</code> (multibase CID) on a loopback alias; DNS must be on so{' '}
+        <code>A</code> queries resolve. See manual hostname <code>ipfs</code> in DNS.
+      </p>
+      <IpfsGatewayCard
+        ipfs={dns.ipfsDweb}
+        dnsEnabled={Boolean(dns.enabled)}
+        dnsListening={Boolean(dns.listening)}
+        onApplied={mergeIpfsStatus}
+      />
     </>
   )
 }

@@ -51,15 +51,15 @@ export function V86Panel ({ controlPanelOrigin }) {
           <input type="checkbox" id="v86-resume-idb" /> Resume from saved snapshot (IndexedDB; tens of MiB; same browser only)
         </label>
       </p>
-      <p id="v86-snapshot-status" style={{ fontSize: 12, color: '#666' }} />
-      <p>
+      <p id="v86-snapshot-status" className="v86-snapshot-status" />
+      <p className="field-row">
         <label>
           Guest TCP port <input id="v86-guest-port" type="number" defaultValue={22} min={1} max={65535} />
-        </label>{' '}
+        </label>
         <label>
           Mesh listen port <input id="v86-ssh-port" type="number" defaultValue={2222} min={1} max={65535} />
-        </label>{' '}
-        (uses bind host above)
+        </label>
+        <span className="field-hint-inline">(uses bind host above)</span>
       </p>
       <p>
         <button type="button" id="v86-start-ssh">Start bridge</button>

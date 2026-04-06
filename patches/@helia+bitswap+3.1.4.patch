@@ -1,0 +1,59 @@
+diff --git a/node_modules/@helia/bitswap/dist/src/peer-want-lists/index.js b/node_modules/@helia/bitswap/dist/src/peer-want-lists/index.js
+index abe4774..85ca5d4 100644
+--- a/node_modules/@helia/bitswap/dist/src/peer-want-lists/index.js
++++ b/node_modules/@helia/bitswap/dist/src/peer-want-lists/index.js
+@@ -1,6 +1,16 @@
+ import { trackedPeerMap } from '@libp2p/peer-collections';
+ import { CID } from 'multiformats/cid';
+ import { Ledger } from "./ledger.js";
++/** Expected when we do not have a block locally and cannot fetch it (incl. FsBlockstore ENOENT). */
++function isBenignSendToPeerError(err) {
++    if (err == null || typeof err !== 'object')
++        return false;
++    if (err.name === 'NotFoundError' || err.code === 'ERR_NOT_FOUND')
++        return true;
++    if (err.name === 'LoadBlockFailedError')
++        return true;
++    return false;
++}
+ export class PeerWantLists {
+     blockstore;
+     network;
+@@ -82,7 +92,16 @@ export class PeerWantLists {
+         // add new wants
+         ledger.addWants(message.wantlist);
+         this.log('send blocks to peer');
+-        await ledger.sendBlocksToPeer();
++        try {
++            await ledger.sendBlocksToPeer();
++        }
++        catch (err) {
++            if (isBenignSendToPeerError(err)) {
++                this.log.trace('bitswap: could not satisfy peer wants from %p — %e', peerId, err);
++                return;
++            }
++            throw err;
++        }
+     }
+     async receivedBlock(cid, options) {
+         const ledgers = [];
+@@ -91,7 +110,18 @@ export class PeerWantLists {
+                 ledgers.push(ledger);
+             }
+         }
+-        await Promise.all(ledgers.map(async (ledger) => ledger.sendBlocksToPeer(options)));
++        await Promise.all(ledgers.map(async (ledger) => {
++            try {
++                await ledger.sendBlocksToPeer(options);
++            }
++            catch (err) {
++                if (isBenignSendToPeerError(err)) {
++                    this.log.trace('bitswap: could not send block to peer %p — %e', ledger.peerId, err);
++                    return;
++                }
++                throw err;
++            }
++        }));
+     }
+     peerDisconnected(peerId) {
+         this.ledgerMap.delete(peerId);

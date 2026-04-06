@@ -381,3 +381,188 @@ button.small {
 .dns-interface-card .policy-disclosure-body form label {
   min-width: 8rem;
 }
+
+/* Browser-net proxy (virtual listeners + streams) */
+.browser-net-proxy-card {
+  margin-top: 0.35rem;
+}
+.browser-net-proxy-error {
+  margin: 0.35rem 0;
+}
+.browser-net-group {
+  margin-top: 0.55rem;
+}
+.browser-net-blurb {
+  margin: 0.15rem 0 0.4rem;
+}
+.browser-net-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.browser-net-list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.browser-net-addr {
+  font-size: 12px;
+  padding: 0.1rem 0.35rem;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+}
+.browser-net-cid {
+  font-size: 10px;
+}
+.browser-net-streams {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.browser-net-stream-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.browser-net-stream-dir {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--acc);
+  text-align: center;
+}
+.browser-net-stream-addr {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-net-stream-state {
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+/* IPFS gateway (status + config) */
+.ipfs-gateway-card {
+  margin-top: 0.35rem;
+}
+.ipfs-gateway-state {
+  font-weight: 600;
+}
+.ipfs-status-grid {
+  margin: 0.5rem 0 0.35rem;
+  padding: 0.45rem 0.5rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.ipfs-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0.2rem 0;
+}
+.ipfs-status-row .dim {
+  min-width: 4.5rem;
+}
+.ipfs-bind-ip {
+  font-size: 12px;
+  padding: 0.05rem 0.3rem;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+}
+.ipfs-config-detail {
+  font-size: 11px;
+  word-break: break-all;
+}
+.ipfs-status-err {
+  margin: 0.4rem 0 0;
+}
+.ipfs-settings-form {
+  margin-top: 0.65rem;
+}
+.ipfs-upload-block {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+.ipfs-upload-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin: 0.35rem 0 0.5rem;
+}
+.ipfs-upload-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 12rem;
+}
+.ipfs-upload-label input[type='file'] {
+  font-size: 12px;
+  max-width: 100%;
+}
+.ipfs-recent-adds {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ipfs-recent-adds li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  align-items: baseline;
+  margin: 0.2rem 0;
+}
+.ipfs-recent-blurb {
+  margin: 0.35rem 0 0;
+  font-size: 11px;
+}
+a.ipfs-recent-cid {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+a.ipfs-recent-cid:hover {
+  text-decoration-color: currentColor;
+}
+a.ipfs-recent-cid code {
+  font-size: 10px;
+  word-break: break-all;
+}
+.ipfs-seeds-block {
+  margin-top: 0.75rem;
+}
+.ipfs-seeds-list li {
+  align-items: center;
+}
+button.ipfs-unseed-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.ipfs-recent-name {
+  font-size: 10px;
+}
+
+.virtual-interfaces-card {
+  margin-top: 0.35rem;
+}

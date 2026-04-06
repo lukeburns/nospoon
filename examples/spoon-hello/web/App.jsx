@@ -10,10 +10,10 @@ export function App () {
   const { signedPlainText, controlPanelOrigin, primaryMeshZ32 } = cfg
 
   return (
-    <>
+    <main className="app">
       <pre id="signature" className="signature">{signedPlainText}</pre>
       {shimNote ? (
-        <p role="alert" style={{ color: '#c00' }}>
+        <p className="app-alert" role="alert">
           {shimNote}
         </p>
       ) : null}
@@ -29,6 +29,6 @@ export function App () {
         }
       />
       <V86Panel controlPanelOrigin={controlPanelOrigin} />
-    </>
+    </main>
   )
 }
