@@ -7,6 +7,9 @@ import {
 
 const NL = '\n'
 
+/** Matches {@link BROWSER_NET_DWEB_WS_PORT} in control-http; manual DNS {@code middle} → same loopback as the IPFS CID gateway. */
+const MIDDLE_WS_PORT = 8766
+
 export function BrowserNetPanel ({
   controlPanelOrigin,
   primaryMeshZ32,
@@ -34,16 +37,25 @@ export function BrowserNetPanel ({
     let cancelled = false
     ;(async function loadShim () {
       try {
-        const o =
-          controlPanelOrigin.indexOf('://') !== -1
-            ? controlPanelOrigin
-            : `http://${controlPanelOrigin}`
-        const cu = new URL(o)
-        setBrowserNetProxy({
-          hostname: cu.hostname,
-          port: cu.port ? Number(cu.port) : undefined,
-          pathname: '/api/browser-net'
-        })
+        let pageUrl = null
+        try {
+          pageUrl = new URL(window.location.href)
+        } catch (_) {}
+        const wsHostParam = pageUrl?.searchParams.get('wsHost')
+        const wsPortParam = pageUrl?.searchParams.get('wsPort')
+        if (wsHostParam && wsHostParam.trim()) {
+          setBrowserNetProxy({
+            hostname: wsHostParam.trim(),
+            port: wsPortParam ? Number(wsPortParam) : MIDDLE_WS_PORT,
+            pathname: '/api/browser-net'
+          })
+        } else {
+          setBrowserNetProxy({
+            hostname: 'middle',
+            port: MIDDLE_WS_PORT,
+            pathname: '/api/browser-net'
+          })
+        }
         if (cancelled) return
       } catch (e) {
         onShimError?.(e)
@@ -52,7 +64,7 @@ export function BrowserNetPanel ({
     return () => {
       cancelled = true
     }
-  }, [controlPanelOrigin, onShimError])
+  }, [onShimError])
 
   const appendLog = useCallback((line) => {
     setLog((prev) => prev + line + NL)
@@ -206,7 +218,9 @@ export function BrowserNetPanel ({
     <section>
       <h2>Browser-net (netcat-style)</h2>
       <p>
-        Loads <code>web/net</code> <code>browser-net-client</code> (cross-origin). From a mesh peer run{' '}
+        WebSocket defaults to <code>ws://middle:{MIDDLE_WS_PORT}/api/browser-net</code> (manual name <code>middle</code>{' '}
+        → same loopback as the CID gateway). Override with <code>?wsHost=…&amp;wsPort=…</code>. Loads{' '}
+        <code>web/net</code> <code>browser-net-client</code> (cross-origin). From a mesh peer run{' '}
         <code>nc &lt;mesh-host&gt; &lt;port&gt;</code> (or similar). Bytes from clients show below as they arrive;
         what you type in the box is sent to <strong>all</strong> connected sessions immediately (UTF-8, edits
         become DEL + insert on the wire). Each peer line is tagged using{' '}

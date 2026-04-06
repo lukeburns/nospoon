@@ -643,7 +643,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     }
     setSeedsLoading(true)
     setSeedsErr(null)
-    fetch('/api/ipfs/seeds')
+    fetch('/api/ipfs/pins')
       .then(function (r) {
         return r.json().then(function (j) {
           if (!r.ok) throw new Error(j.error || String(r.status))
@@ -651,7 +651,12 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
         })
       })
       .then(function (j) {
-        setSeeds(Array.isArray(j.seeds) ? j.seeds : [])
+        const rows = Array.isArray(j.pins)
+          ? j.pins
+          : Array.isArray(j.seeds)
+            ? j.seeds
+            : []
+        setSeeds(rows)
       })
       .catch(function (err) {
         setSeedsErr(err.message || String(err))
@@ -751,7 +756,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     function (cid) {
       setUnseedingCid(cid)
       setMsg(null)
-      fetch('/api/ipfs/seeds?cid=' + encodeURIComponent(cid), { method: 'DELETE' })
+      fetch('/api/ipfs/pins/' + encodeURIComponent(cid), { method: 'DELETE' })
         .then(function (r) {
           return r.json().then(function (j) {
             if (!r.ok) throw new Error(j.error || String(r.status))
@@ -895,7 +900,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                     const name = row.filename || '—'
                     return (
                       <li key={row.cid}>
-                        <a className="ipfs-recent-cid" href={href} title={href}>
+                        <a className="ipfs-recent-cid" href={href} title={href} target="_blank" rel="noopener noreferrer">
                           <code>{row.cid}</code>
                         </a>
                         <span className="dim ipfs-recent-name">{name}</span>

@@ -1,3 +1,4 @@
+.DS_Store
 node_modules/
 lib/v86/guest/*.bin
 lib/v86/guest/freebsd/

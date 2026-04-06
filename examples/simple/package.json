@@ -1,0 +1,16 @@
+{
+  "name": "@nospoon/simple-browser-net",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal browser-net example: one bundled echo server in a single index.html",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.7",
+    "esbuild-plugins-node-modules-polyfill": "^1.8.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
