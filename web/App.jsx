@@ -1144,6 +1144,10 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   {uploadBusy ? 'Uploading…' : 'Upload folder'}
                 </button>
               </form>
+              <p className="dim meta-tight">
+                Large single-file uploads stream to disk, then into the running Helia worker (no second process).
+                Optional cap: <code>NOSPOON_IPFS_MAX_UPLOAD_BYTES</code> (default 512&nbsp;GiB).
+              </p>
             </>
           )}
           {i.mode === 'helia' && i.canUpload ? (
