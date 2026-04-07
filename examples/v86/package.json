@@ -1,0 +1,21 @@
+{
+  "name": "@nospoon/v86-browser-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-contained v86 + FreeBSD + mesh TCP bridge; assets under assets/v86, copied to dist by build",
+  "scripts": {
+    "vendor": "node scripts/vendor-v86.mjs",
+    "fetch-freebsd-disk": "node scripts/vendor-v86.mjs --freebsd-disk",
+    "build": "node scripts/build.mjs",
+    "build:inline": "node scripts/build.mjs --inline",
+    "preview": "node scripts/preview.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.7",
+    "esbuild-plugins-node-modules-polyfill": "^1.8.1",
+    "v86": "^0.5.319"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

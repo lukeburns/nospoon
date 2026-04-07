@@ -1,0 +1,140 @@
+:root {
+  font-family: system-ui, sans-serif;
+  line-height: 1.45;
+}
+
+body {
+  margin: 1.25rem;
+  max-width: 52rem;
+}
+
+.page-header .lede {
+  margin: 0.5rem 0 0;
+  font-size: 0.95rem;
+  color: #333;
+  max-width: 48rem;
+}
+
+code {
+  background: #f0f0f0;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.section-label {
+  display: block;
+  font-weight: 600;
+  margin-top: 1.25rem;
+}
+
+.field-hint {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.5rem;
+}
+
+.field-row label {
+  margin: 0;
+}
+
+.field-hint-inline {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+@media (min-width: 520px) {
+  .field-hint-inline {
+    flex-basis: auto;
+    align-self: center;
+  }
+}
+
+label {
+  display: block;
+  margin: 0.5rem 0;
+  font-size: 0.92rem;
+  color: #333;
+}
+
+input[type='text'],
+input[type='number'] {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+input[type='number'] {
+  width: 6.5rem;
+}
+
+input[type='checkbox'] {
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+button {
+  font-size: 0.875rem;
+  padding: 0.4rem 0.85rem;
+  margin: 0.35rem 0.5rem 0 0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #eaeaea;
+}
+
+.v86-section {
+  margin-top: 1.5rem;
+}
+
+#v86-screen-container {
+  min-height: 240px;
+  max-width: 52rem;
+  margin: 0.75rem 0;
+  background: #000;
+  border: 1px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#v86-screen-container canvas {
+  display: block;
+  margin: 0 auto;
+}
+
+.v86-snapshot-status {
+  font-size: 12px;
+  color: #555;
+  margin: 0.35rem 0;
+}
+
+pre.v86-log {
+  margin-top: 0.35rem;
+  padding: 0.75rem 1rem;
+  background: #111;
+  color: #e8e8e8;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 4rem;
+  max-height: 14rem;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+}

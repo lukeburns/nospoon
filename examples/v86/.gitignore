@@ -1,0 +1,6 @@
+node_modules/
+dist/
+
+# Large optional downloads (npm run vendor -- --freebsd-disk)
+assets/v86/guest/freebsd/*.img
+assets/v86/guest/freebsd_state-v2.bin.zst
