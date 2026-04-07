@@ -7,6 +7,9 @@
 /** Must match `BIN_TAG` in the mesh proxy */
 export const BIN_TAG = 0x01
 
+/** Must match `RAW_IP_TAG` in the mesh proxy — raw IPv4 packet framing */
+export const RAW_IP_TAG = 0x02
+
 /** @type {Map<string, ReturnType<typeof createHubState>>} */
 const hubs = new Map()
 
@@ -20,6 +23,7 @@ function createHubState (url) {
     _opening: null,
     streams: new Map(),
     activeServer: null,
+    activeInterface: null,
     connectPending: new Map(),
     ridHandlers: new Map()
   }
@@ -89,9 +93,14 @@ function createHubState (url) {
       return
     }
     const ab = ev.data
-    if (!(ab instanceof ArrayBuffer) || ab.byteLength < 5) return
+    if (!(ab instanceof ArrayBuffer) || ab.byteLength < 2) return
     const u8 = new Uint8Array(ab)
-    if (u8[0] !== BIN_TAG) return
+    if (u8[0] === RAW_IP_TAG) {
+      const iface = state.activeInterface
+      if (iface) iface._pushPacket(u8.subarray(1))
+      return
+    }
+    if (u8[0] !== BIN_TAG || ab.byteLength < 5) return
     const sid = new DataView(ab).getUint32(1, false)
     const sock = state.streams.get(sid)
     if (sock) sock._pushData(u8.subarray(5))
@@ -123,6 +132,7 @@ function createHubState (url) {
   state.maybeTeardown = function () {
     if (state.streams.size > 0 || state.connectPending.size > 0) return
     if (state.activeServer && state.activeServer._listening) return
+    if (state.activeInterface && state.activeInterface._bound) return
     if (state.ws) {
       try {
         state.ws.removeEventListener('message', state.onMessage)
@@ -430,6 +440,117 @@ export class BrowserNetServer extends EventTarget {
  * }} opts
  * @returns {Promise<BrowserNetSocket>}
  */
+/**
+ * Raw IP interface — binds an entire IP address and sends/receives raw IPv4 packets.
+ * Used by v86 guests and other scenarios where the guest OS handles TCP/UDP itself.
+ */
+export class BrowserNetInterface extends EventTarget {
+  /**
+   * @param {{ url?: string, location?: Location }} [opts]
+   */
+  constructor (opts = {}) {
+    super()
+    if (typeof location === 'undefined' && !opts.url) {
+      throw new Error('BrowserNetInterface: pass opts.url outside a window')
+    }
+    this._url =
+      opts.url ||
+      defaultBrowserNetWsUrl(opts.location || /** @type {Location} */ (location))
+    this._hub = getOrCreateHub(this._url)
+    this._bound = false
+    /** @type {string | null} */
+    this.host = null
+  }
+
+  on (type, fn) {
+    this.addEventListener(type, fn)
+    return this
+  }
+
+  /**
+   * Bind to an IP address. The middleware will forward all raw IP packets
+   * destined for this IP to this interface.
+   * @param {string} host — IPv4 address or mesh DNS name
+   * @returns {Promise<string>} — the resolved bind IP
+   */
+  async bind (host) {
+    await this._hub.ensureOpen()
+    const ws = this._hub.ws
+    if (!ws) throw new Error('WebSocket closed')
+    this._hub.activeInterface = this
+    const rid = `bi-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const hub = this._hub
+    const self = this
+    return new Promise((resolve, reject) => {
+      hub.ridHandlers.set(rid, function (j) {
+        if (j.op === 'bind_interface_ok') {
+          self._bound = true
+          self.host = j.host || host
+          resolve(self.host)
+        } else if (j.op === 'bind_interface_err') {
+          if (hub.activeInterface === self) hub.activeInterface = null
+          reject(new Error(j.error || 'bind_interface_err'))
+        } else {
+          if (hub.activeInterface === self) hub.activeInterface = null
+          reject(new Error('unexpected bind_interface reply'))
+        }
+      })
+      try {
+        ws.send(JSON.stringify({ op: 'bind_interface', host, rid }))
+      } catch (e) {
+        hub.ridHandlers.delete(rid)
+        if (hub.activeInterface === self) hub.activeInterface = null
+        reject(e instanceof Error ? e : new Error(String(e)))
+      }
+    })
+  }
+
+  /**
+   * Send a raw IPv4 packet through the tunnel.
+   * @param {Uint8Array} packet — complete IPv4 packet
+   */
+  send (packet) {
+    if (!this._bound) return
+    const ws = this._hub.ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    const out = new Uint8Array(1 + packet.length)
+    out[0] = RAW_IP_TAG
+    out.set(packet, 1)
+    ws.send(out.buffer)
+  }
+
+  /**
+   * Unbind the interface and release the IP.
+   */
+  close () {
+    const ws = this._hub.ws
+    if (ws && ws.readyState === WebSocket.OPEN && this._bound && this.host) {
+      const rid = `ubi-${Date.now()}`
+      const hub = this._hub
+      hub.ridHandlers.set(rid, function () {
+        hub.maybeTeardown()
+      })
+      try {
+        ws.send(JSON.stringify({ op: 'unbind_interface', host: this.host, rid }))
+      } catch (_) {
+        hub.ridHandlers.delete(rid)
+      }
+    }
+    if (this._hub.activeInterface === this) {
+      this._hub.activeInterface = null
+    }
+    this._bound = false
+    this.host = null
+    this._hub.maybeTeardown()
+  }
+
+  /** @param {Uint8Array} pkt */
+  _pushPacket (pkt) {
+    if (!this._bound) return
+    this.dispatchEvent(new MessageEvent('packet', { data: pkt }))
+  }
+}
+
 export function browserNetConnect (opts) {
   const port = Number(opts.port)
   const host = opts.host != null ? String(opts.host).trim() : ''

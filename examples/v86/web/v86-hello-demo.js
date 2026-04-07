@@ -1,12 +1,12 @@
 'use strict'
 
 /**
- * v86 (fetch backend) + browser-net: inbound mesh TCP sessions bridge to a guest TCP port.
- * Bundled shim via {@code browser-net-shim}; WebSocket proxy comes from {@link ./env.js}
- * ({@code applyBrowserNetProxyFromLocation}), not from the control HTTP host.
+ * v86 + browser-net interface mode: guest NE2000 ↔ Ethernet ↔ raw IPv4 ↔ mesh tunnel.
+ * The guest OS handles TCP/IP directly; we just bridge Ethernet frames to raw IP packets.
+ * Bundled shim via {@code browser-net-shim}; WebSocket proxy comes from {@link ./env.js}.
  */
 
-const { BrowserNetServer, defaultBrowserNetWsUrl } = require('browser-net-shim')
+const { BrowserNetInterface, defaultBrowserNetWsUrl } = require('browser-net-shim')
 
 /** Bump if snapshot format or guest config changes and old blobs must be ignored. */
 const SNAPSHOT_SCHEMA = 3
@@ -17,11 +17,12 @@ const IDB_NAME = 'nospoon-v86-example'
 const IDB_VER = 1
 const IDB_STORE = 'kv'
 
-const GUEST_PORT = 22
-const MESH_PORT = 22
-
-/** How often to retry the bridge probe while waiting for the guest. */
+/** How often to retry bind_interface while waiting for the mesh. */
 const POLL_INTERVAL_MS = 5000
+
+/** Fixed MAC for our virtual gateway (Ethernet framing). */
+const GATEWAY_MAC = new Uint8Array([0x52, 0x54, 0x00, 0x01, 0x02, 0x03])
+const BROADCAST_MAC = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
 
 function idbOpen () {
   return new Promise(function (resolve, reject) {
@@ -213,44 +214,8 @@ async function initV86HelloDemo (opts) {
   } catch (_) {}
 
   let emulator = null
-  let sshServer = null
+  let activeIface = null
   let pollTimer = null
-  let macFixed = false
-
-  function tcpProbeWithTimeout (na, port, ms) {
-    let timer
-    return Promise.race([
-      na.tcp_probe(port),
-      new Promise(function (_resolve, reject) {
-        timer = setTimeout(function () {
-          reject(new Error('probe-timeout'))
-        }, ms)
-      })
-    ])
-      .then(function (ok) {
-        clearTimeout(timer)
-        return ok
-      })
-      .catch(function (e) {
-        clearTimeout(timer)
-        if (e && e.message === 'probe-timeout') return false
-        throw e
-      })
-  }
-
-  function withTimeout (p, ms, label) {
-    let timer
-    return Promise.race([
-      p,
-      new Promise(function (_resolve, reject) {
-        timer = setTimeout(function () {
-          reject(new Error(label + '-timeout'))
-        }, ms)
-      })
-    ]).finally(function () {
-      clearTimeout(timer)
-    })
-  }
 
   const wsUrl = defaultBrowserNetWsUrl(
     typeof window !== 'undefined' && window.location
@@ -274,6 +239,8 @@ async function initV86HelloDemo (opts) {
         use_parts: true,
         fixed_chunk_size: 1048576
       },
+      // relay_url needed so v86 creates the NE2000 device; wireEthernetBridge
+      // replaces the fetch adapter's bus handler with our raw IP tunnel.
       net_device: { relay_url: 'fetch', type: 'ne2k' },
       autostart: true
     }
@@ -342,127 +309,144 @@ async function initV86HelloDemo (opts) {
   refreshSnapshotStatus()
 
   /**
-   * v86 NE2000 bug workaround — see earlier comments for full explanation.
-   * Temporarily enables promiscuous mode, sends a broadcast ARP to learn the
-   * guest's real MAC, patches ne2k.mac and na.vm_mac, restores filtering.
+   * Hook v86's NE2000 bus to forward raw IPv4 packets through a BrowserNetInterface.
+   * Handles ARP at the Ethernet level so the guest can resolve any IP to our
+   * gateway MAC — all traffic routes through the interface tunnel.
    */
-  async function fixNe2kMacAfterRestore (na) {
-    if (macFixed) return
-    var ne2k
+  function wireEthernetBridge (iface) {
+    const bus = emulator.bus
+    // Seed from NE2000's MAC register — even though it's the random constructor
+    // value (set_state bug), it matches the NE2000 receive filter. Using this
+    // instead of broadcast avoids FreeBSD dropping TCP on L2 broadcast frames.
+    let guestMac = null
     try {
-      ne2k = emulator.v86.cpu.devices.net
-    } catch (_) {
-      return
-    }
-    if (!ne2k || !na) return
-
-    ne2k.rxcr = ne2k.rxcr | 0x10
-
-    var realMac = null
-    var origSend = na.send
-    na.send = function (data) {
-      if (!realMac && data && data.length >= 14) {
-        var src = new Uint8Array(data.buffer || data, (data.byteOffset || 0) + 6, 6)
-        if (src[0] === 0x00 && src[1] === 0x22 && src[2] === 0x15) {
-          realMac = new Uint8Array(src)
-        }
+      const ne2k = emulator.v86.cpu.devices.net
+      if (ne2k && ne2k.mac && ne2k.mac.length === 6) {
+        guestMac = new Uint8Array(ne2k.mac)
       }
-      return origSend.call(na, data)
+    } catch (_) {}
+    const fmtIp = function (u8, off) { return u8[off] + '.' + u8[off + 1] + '.' + u8[off + 2] + '.' + u8[off + 3] }
+    const fmtMac = function (u8, off) { return Array.from(u8.subarray(off, off + 6)).map(function (b) { return b.toString(16).padStart(2, '0') }).join(':') }
+    const fmtPkt = function (ip) {
+      var s = fmtIp(ip, 12) + ' → ' + fmtIp(ip, 16) + ' proto=' + ip[9] + ' len=' + ip.length
+      if (ip[9] === 6 && ip.length >= 40) {
+        var ihl = (ip[0] & 0x0f) * 4
+        var f = ip[ihl + 13], fl = []
+        if (f & 0x02) fl.push('SYN')
+        if (f & 0x10) fl.push('ACK')
+        if (f & 0x01) fl.push('FIN')
+        if (f & 0x04) fl.push('RST')
+        if (f & 0x08) fl.push('PSH')
+        s += ' [' + fl.join(',') + '] :' + ((ip[ihl] << 8) | ip[ihl + 1]) + '→:' + ((ip[ihl + 2] << 8) | ip[ihl + 3])
+      }
+      return s
     }
 
-    var arp = new Uint8Array(42)
-    arp.set([0xff, 0xff, 0xff, 0xff, 0xff, 0xff], 0)
-    arp.set([0x52, 0x54, 0x00, 0x01, 0x02, 0x03], 6)
-    arp[12] = 0x08; arp[13] = 0x06
-    arp[14] = 0x00; arp[15] = 0x01
-    arp[16] = 0x08; arp[17] = 0x00
-    arp[18] = 6; arp[19] = 4
-    arp[20] = 0x00; arp[21] = 0x01
-    arp.set([0x52, 0x54, 0x00, 0x01, 0x02, 0x03], 22)
-    arp.set(na.router_ip, 28)
-    arp.set([0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 32)
-    arp.set(na.vm_ip, 38)
-    na.receive(arp)
+    bus.register('net0-send', function (ethFrame) {
+      const u8 = new Uint8Array(ethFrame)
+      if (u8.length < 14) return
 
-    await new Promise(function (r) { setTimeout(r, 500) })
-    na.send = origSend
+      // Learn guest MAC from source field of outgoing frames
+      if (!guestMac) {
+        guestMac = u8.slice(6, 12)
+        log('Learned guest MAC: ' + fmtMac(guestMac, 0))
+      }
 
-    if (realMac) {
-      var fmtMac = function (m) { return Array.from(m).map(function (b) { return b.toString(16).padStart(2, '0') }).join(':') }
-      log('Learned guest MAC: ' + fmtMac(realMac))
-      ne2k.mac = new Uint8Array(realMac)
-      na.vm_mac = new Uint8Array(realMac)
-      ne2k.rxcr = ne2k.rxcr & ~0x10
-      macFixed = true
-    }
+      const etherType = (u8[12] << 8) | u8[13]
+
+      if (etherType === 0x0806 && u8.length >= 42) {
+        // ARP — reply to requests with our gateway MAC, but skip requests
+        // for the guest's own IP (gratuitous ARP / DAD) to avoid FreeBSD
+        // detecting a false IP conflict and killing connections.
+        const opcode = (u8[20] << 8) | u8[21]
+        if (opcode !== 1) return
+        var targetIp = fmtIp(u8, 38)
+        var senderIp = fmtIp(u8, 28)
+        if (targetIp === senderIp) {
+          log('ARP probe (DAD) for ' + targetIp + ' — ignoring')
+          return
+        }
+        log('ARP request: who has ' + targetIp + '? → replying with gateway MAC')
+        const reply = new Uint8Array(42)
+        reply.set(u8.subarray(6, 12), 0)   // dst = sender's MAC
+        reply.set(GATEWAY_MAC, 6)            // src = gateway
+        reply[12] = 0x08; reply[13] = 0x06
+        reply[14] = 0x00; reply[15] = 0x01   // hw type: Ethernet
+        reply[16] = 0x08; reply[17] = 0x00   // proto type: IPv4
+        reply[18] = 6; reply[19] = 4
+        reply[20] = 0x00; reply[21] = 0x02   // opcode: reply
+        reply.set(GATEWAY_MAC, 22)            // sender MAC
+        reply.set(u8.subarray(38, 42), 28)    // sender IP = requested target IP
+        reply.set(u8.subarray(22, 28), 32)    // target = original sender
+        bus.send('net0-receive', reply)
+        return
+      }
+
+      if (etherType === 0x0800) {
+        // IPv4 — strip Ethernet header and any Ethernet padding (NE2000
+        // pads frames to 60 bytes; the extra bytes corrupt the TCP stream
+        // if forwarded). Trim to the IP total length field.
+        var ip = u8.subarray(14)
+        var ipTotalLen = (ip[2] << 8) | ip[3]
+        if (ipTotalLen < 20 || ipTotalLen > ip.length) return
+        ip = ip.subarray(0, ipTotalLen)
+        log('TX ' + fmtPkt(ip))
+        iface.send(ip)
+      }
+    })
+
+    iface.on('packet', function (ev) {
+      const ipPkt = ev.data
+      if (!ipPkt || ipPkt.length < 20) return
+      log('RX ' + fmtPkt(ipPkt))
+      // Wrap in Ethernet: dst=guest (broadcast until learned), src=gateway, type=IPv4
+      const frame = new Uint8Array(14 + ipPkt.length)
+      frame.set(guestMac || BROADCAST_MAC, 0)
+      frame.set(GATEWAY_MAC, 6)
+      frame[12] = 0x08; frame[13] = 0x00
+      frame.set(ipPkt, 14)
+      bus.send('net0-receive', frame)
+    })
   }
 
-  /** Try to bring up the bridge. Returns true on success. */
+  /** Try to bind the interface. Returns true on success. */
   async function tryStartBridge () {
-    if (!emulator || !emulator.network_adapter) return false
-    if (sshServer) return true
-    const na = emulator.network_adapter
-
-    await fixNe2kMacAfterRestore(na)
-
-    let open
-    try {
-      open = await tcpProbeWithTimeout(na, GUEST_PORT, 10000)
-    } catch (_) {
-      return false
-    }
-    if (!open) return false
+    if (!emulator) return false
+    if (activeIface) return true
 
     const host =
       bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
-    const server = new BrowserNetServer({ url: wsUrl })
-    server.addEventListener('connection', function (ev) {
-      const sock = ev.detail
-      let tcp = null
-      try {
-        tcp = na.connect(GUEST_PORT)
-      } catch (e) {
-        try { sock.end() } catch (_) {}
-        return
-      }
-      tcp.on('data', function (u8) {
-        try { sock.write(u8) } catch (_) {}
-      })
-      tcp.on('close', function () {
-        try { sock.end() } catch (_) {}
-      })
-      tcp.on('shutdown', function () {
-        try { sock.end() } catch (_) {}
-      })
-      sock.addEventListener('data', function (e) {
-        if (tcp) tcp.write(new Uint8Array(e.data))
-      })
-      sock.addEventListener('close', function () {
-        try { if (tcp) tcp.close() } catch (_) {}
-        tcp = null
-      })
-    })
+    const iface = new BrowserNetInterface({ url: wsUrl })
     try {
-      if (host) {
-        await withTimeout(server.listen({ port: MESH_PORT, host }), 30000, 'listen')
-      } else {
-        await withTimeout(server.listen(MESH_PORT), 30000, 'listen')
-      }
-      sshServer = server
-      log('Bridge connected — mesh :' + MESH_PORT + ' → guest :' + GUEST_PORT)
+      const boundIp = await iface.bind(host)
+      wireEthernetBridge(iface)
+      activeIface = iface
+      log('Bridge connected — bound to ' + boundIp)
+      // Configure the guest's NIC with the mesh IP (delay for guest shell readiness)
+      setTimeout(function () {
+        emulator.keyboard_send_text('ifconfig ed0 inet ' + boundIp + '/24\n')
+      }, 1000)
+      // setTimeout(function () {
+      //   emulator.keyboard_send_scancodes([                                                                        
+      //     0x1D,       // Ctrl down                                                                                
+      //     0x26,       // L down                                                                                   
+      //     0xA6,       // L up                                                                                     
+      //     0x9D        // Ctrl up                                                                                  
+      //   ])
+      // }, 1000)
       return true
     } catch (e) {
-      try { server.close() } catch (_) {}
+      try { iface.close() } catch (_) {}
       const msg = e && e.message ? e.message : e
-      log('Bridge listen error: ' + msg)
+      log('Bridge bind error: ' + msg)
       return false
     }
   }
 
   function stopBridge () {
-    if (sshServer) {
-      try { sshServer.close() } catch (_) {}
-      sshServer = null
+    if (activeIface) {
+      try { activeIface.close() } catch (_) {}
+      activeIface = null
       log('Bridge disconnected.')
     }
   }
@@ -481,7 +465,7 @@ async function initV86HelloDemo (opts) {
 
     async function tick () {
       pollTimer = null
-      if (sshServer) {
+      if (activeIface) {
         setBridgeState('connected')
         return
       }
@@ -563,7 +547,7 @@ async function initV86HelloDemo (opts) {
         return
       }
       stopPolling()
-      if (sshServer) {
+      if (activeIface) {
         stopBridge()
       }
       setBridgeState('off')

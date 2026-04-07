@@ -21,6 +21,7 @@ const {
 } = require('./tcp-ipv4')
 
 const BIN_TAG = 0x01
+const RAW_IP_TAG = 0x02
 
 /**
  * @typedef {object} InboundPacketCtx
@@ -89,6 +90,8 @@ function createBrowserNetMiddleware (opts) {
 
   /** @type {Map<string, { ws: import('ws'), clientId: string }>} */
   const listeners = new Map()
+  /** @type {Map<string, { ws: import('ws'), clientId: string }>} ip → owner */
+  const interfaces = new Map()
   /** @type {Map<string, TcpSession>} */
   const sessions = new Map()
 
@@ -247,6 +250,21 @@ function createBrowserNetMiddleware (opts) {
    * @returns {boolean}
    */
   function tryConsumeInboundPacket (packet, ctx) {
+    // Interface mode: if the dest IP is bound to a WebSocket, forward the
+    // entire raw IP packet without parsing TCP or managing sessions.
+    if (packet.length >= 20) {
+      const dstIpRaw = `${packet[16]}.${packet[17]}.${packet[18]}.${packet[19]}`
+      const iface = interfaces.get(dstIpRaw)
+      if (iface && iface.ws.readyState === 1) {
+        const hdr = Buffer.allocUnsafe(1)
+        hdr[0] = RAW_IP_TAG
+        try {
+          iface.ws.send(Buffer.concat([hdr, packet]), { binary: true })
+        } catch (_) {}
+        return true
+      }
+    }
+
     const parsed = parseIpv4Tcp(packet)
     if (!parsed) return false
 
@@ -448,6 +466,9 @@ function createBrowserNetMiddleware (opts) {
     for (const [k, rec] of listeners.entries()) {
       if (rec.ws === ws) listeners.delete(k)
     }
+    for (const [k, rec] of interfaces.entries()) {
+      if (rec.ws === ws) interfaces.delete(k)
+    }
   }
 
   /**
@@ -459,9 +480,25 @@ function createBrowserNetMiddleware (opts) {
     ws._browserNetClientId = crypto.randomBytes(4).toString('hex')
     function browserNetWsMessage (data, isBinary) {
       if (isBinary && Buffer.isBuffer(data)) {
-        if (data.length < 5 || data[0] !== BIN_TAG) return
-        const sid = data.readUInt32BE(1) >>> 0
-        browserData(ws, sid, data.subarray(5))
+        if (data.length < 2) return
+        if (data[0] === RAW_IP_TAG) {
+          // Interface mode: raw IP packet from the browser, route to mesh.
+          if (!getOutboundRoute) return
+          const pkt = data.subarray(1)
+          if (pkt.length < 20) return
+          const dstIp = `${pkt[16]}.${pkt[17]}.${pkt[18]}.${pkt[19]}`
+          const route = getOutboundRoute(dstIp, ws)
+          if (route && typeof route.writeFramed === 'function') {
+            sendFramedIpv4(route.writeFramed, pkt)
+          }
+          return
+        }
+        if (data[0] === BIN_TAG) {
+          if (data.length < 5) return
+          const sid = data.readUInt32BE(1) >>> 0
+          browserData(ws, sid, data.subarray(5))
+          return
+        }
         return
       }
       let msg
@@ -475,6 +512,62 @@ function createBrowserNetMiddleware (opts) {
       if (op === 'hello') {
         try {
           ws.send(JSON.stringify({ op: 'hello_ok', v: 1 }))
+        } catch (_) {}
+        return
+      }
+      if (op === 'bind_interface') {
+        const rid = msg.rid
+        const rawHost =
+          msg.host != null && String(msg.host).trim() !== ''
+            ? String(msg.host).trim()
+            : null
+        let bindIp = null
+        if (rawHost == null) {
+          bindIp = getDefaultListenIpv4(ws) || null
+        } else if (resolveListenHost) {
+          bindIp = resolveListenHost(rawHost, ws) || ipv4Literal(rawHost)
+        } else {
+          bindIp = ipv4Literal(rawHost)
+        }
+        if (!bindIp) {
+          try {
+            ws.send(JSON.stringify({ op: 'bind_interface_err', rid, error: MSG_UNKNOWN_HOST }))
+          } catch (_) {}
+          return
+        }
+        const prev = interfaces.get(bindIp)
+        if (prev && prev.ws !== ws) {
+          try {
+            ws.send(JSON.stringify({ op: 'bind_interface_err', rid, error: 'interface already bound by another session' }))
+          } catch (_) {}
+          return
+        }
+        interfaces.set(bindIp, { ws, clientId: ws._browserNetClientId })
+        try {
+          ws.send(JSON.stringify({ op: 'bind_interface_ok', rid, host: bindIp }))
+        } catch (_) {}
+        return
+      }
+      if (op === 'unbind_interface') {
+        const rid = msg.rid
+        const rawHost =
+          msg.host != null && String(msg.host).trim() !== ''
+            ? String(msg.host).trim()
+            : null
+        let bindIp = null
+        if (rawHost == null) {
+          bindIp = getDefaultListenIpv4(ws) || null
+        } else if (resolveListenHost) {
+          bindIp = resolveListenHost(rawHost, ws) || ipv4Literal(rawHost)
+        } else {
+          bindIp = ipv4Literal(rawHost)
+        }
+        if (bindIp) {
+          const cur = interfaces.get(bindIp)
+          if (cur && cur.ws === ws) interfaces.delete(bindIp)
+        }
+        try {
+          ws.send(JSON.stringify({ op: 'unbind_interface_ok', rid }))
         } catch (_) {}
         return
       }
@@ -793,10 +886,15 @@ function createBrowserNetMiddleware (opts) {
         remote: { ip: s.remoteIp, port: s.remotePort }
       })
     }
+    const interfaceList = []
+    for (const [ip, rec] of interfaces.entries()) {
+      interfaceList.push({ host: ip, clientId: rec.clientId })
+    }
     return {
       defaultListenIpv4: def || null,
       primaryTunIp: def || null,
       listeners: listenerList,
+      interfaces: interfaceList,
       streams: streamList
     }
   }
@@ -810,5 +908,6 @@ function createBrowserNetMiddleware (opts) {
 
 module.exports = {
   createBrowserNetMiddleware,
-  BIN_TAG
+  BIN_TAG,
+  RAW_IP_TAG
 }
