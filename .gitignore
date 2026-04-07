@@ -1,10 +1,5 @@
 .DS_Store
 node_modules/
-lib/v86/guest/*.bin
-lib/v86/guest/*.img
-lib/v86/guest/freebsd/
-lib/v86/guest/freebsd_state-v2.bin.zst
-lib/v86/guest/freebsd-meta.json
 web/dist/
 examples/spoon-hello/dist/
 examples/spoon-hello/web/main.js

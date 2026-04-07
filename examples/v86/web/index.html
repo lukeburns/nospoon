@@ -9,57 +9,21 @@
 </head>
 <body>
   <header class="page-header">
-    <h1>v86 in the browser</h1>
-    <p class="lede">
-      After <code>npm run vendor</code> and <code>npm run build</code>, <strong>v86</strong> assets ship beside this page
-      under <code>/v86/</code> (same origin). <strong>Browser-net</strong> uses the same query parameters as
-      <code>examples/simple</code> (<code>proxyHost</code>, <code>wsHost</code>, …). Use
-      <code>?controlOrigin=…</code> only if you host the UI elsewhere but pull <code>/v86/*</code> from another origin.
-    </p>
+    <h1>v86</h1>
   </header>
 
   <section class="v86-section">
-    <p class="field-hint">
-      Prefetch disk chunks from the nospoon repo root: <code>npm run fetch-freebsd-disk</code> (~2 GiB under
-      <code>lib/v86/guest/freebsd/</code>). Cold boot is slow; IndexedDB snapshot speeds restarts.
-      Click the emulated screen for keyboard focus. In the guest, <code>dhclient</code> then bridge SSH (or raw TCP).
-    </p>
-
-    <p class="field-row">
-      <label>
-        Mesh bind host (optional)
-        <input id="bindhost" type="text" size="48" placeholder="z32.topic or leave empty for primary"/>
-      </label>
-      <span class="field-hint-inline">Prefilled from whois when the page host is a CID-shaped label.</span>
-    </p>
-
     <div id="v86-screen-container"></div>
-    <p>
-      <button type="button" id="v86-start-vm">Start VM</button>
-      <button type="button" id="v86-stop-vm">Stop VM</button>
-      <button type="button" id="v86-save-snapshot">Save snapshot to browser</button>
-      <button type="button" id="v86-clear-snapshot">Clear saved snapshot</button>
-    </p>
-    <p>
-      <label>
-        <input type="checkbox" id="v86-resume-idb"/> Resume from saved snapshot (IndexedDB; same browser only)
-      </label>
+    <p class="v86-toolbar">
+      <span id="v86-bridge-status" class="bridge-status bridge-status--off" title="Bridge status"></span>
+      <button type="button" id="v86-stop-ssh" class="bridge-disconnect-btn" hidden>Disconnect</button>
+      <span class="toolbar-spacer"></span>
+      <button type="button" id="v86-save-snapshot">Save</button>
+      <button type="button" id="v86-clear-snapshot">Wipe</button>
     </p>
     <p id="v86-snapshot-status" class="v86-snapshot-status"></p>
-    <p class="field-row">
-      <label>
-        Guest TCP port <input id="v86-guest-port" type="number" value="22" min="1" max="65535"/>
-      </label>
-      <label>
-        Mesh listen port <input id="v86-ssh-port" type="number" value="2222" min="1" max="65535"/>
-      </label>
-    </p>
-    <p>
-      <button type="button" id="v86-start-ssh">Start bridge</button>
-      <button type="button" id="v86-stop-ssh">Stop bridge</button>
-    </p>
-    <span class="section-label">v86 log</span>
-    <pre id="v86-log" class="v86-log" aria-label="v86 log"></pre>
+    <span class="section-label">Log</span>
+    <pre id="v86-log" class="v86-log" aria-label="Log"></pre>
   </section>
 
   <script src="bundle.js" defer></script>

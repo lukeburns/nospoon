@@ -2,7 +2,7 @@
   "name": "@nospoon/spoon-hello",
   "version": "0.1.0",
   "private": true,
-  "description": "Standalone spoon hello example: React UI + mesh signed greeting server (models browser esbuild + node polyfills)",
+  "description": "Mesh signed-greeting HTTP server with a minimal React shell (esbuild bundle)",
   "main": "server.js",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -13,7 +13,6 @@
   },
   "devDependencies": {
     "esbuild": "^0.25.12",
-    "esbuild-plugins-node-modules-polyfill": "^1.8.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

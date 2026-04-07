@@ -23,7 +23,7 @@ const MIME = {
 
 /**
  * @param {string} html
- * @param {{ signedPlainText: string, controlPanelOrigin: string, primaryMeshZ32: string }} payload
+ * @param {{ signedPlainText: string }} payload
  */
 function injectSpoonHelloConfig (html, payload) {
   const json = JSON.stringify(payload).replace(/</g, '\\u003c')
@@ -62,10 +62,8 @@ function safeResolveStatic (reqPath) {
 
 /**
  * @param {string} signedPlainText
- * @param {string} controlPanelOriginJson
- * @param {string} primaryMeshZ32Json
  */
-function buildSpoonHelloHtmlPage (signedPlainText, controlPanelOriginJson, primaryMeshZ32Json) {
+function buildSpoonHelloHtmlPage (signedPlainText) {
   let htmlPath = path.join(DIST_DIR, 'index.html')
   let html
   try {
@@ -77,31 +75,14 @@ function buildSpoonHelloHtmlPage (signedPlainText, controlPanelOriginJson, prima
         ')'
     )
   }
-  let controlPanelOrigin
-  let primaryMeshZ32
-  try {
-    controlPanelOrigin = JSON.parse(controlPanelOriginJson)
-  } catch {
-    controlPanelOrigin = ''
-  }
-  try {
-    primaryMeshZ32 = JSON.parse(primaryMeshZ32Json)
-  } catch {
-    primaryMeshZ32 = ''
-  }
-  html = injectSpoonHelloConfig(html, {
-    signedPlainText,
-    controlPanelOrigin,
-    primaryMeshZ32
-  })
-  return html
+  return injectSpoonHelloConfig(html, { signedPlainText })
 }
 
 /**
  * HTTP “hello” on one or more bind addresses (topic TUN + optional primary TUN): looks up the
  * visitor via whois (by IP) and returns a signed line with local and remote wire identities.
- * Browsers (Accept: text/html) get the React app from `dist/` plus injected config.
- * @param {{ bindAddress?: string, bindAddresses?: string[], port?: number, myPublicKeyZ32: string, secretKey: Buffer, fetchVisitorKeyLine: (ip: string) => Promise<string>, onError?: (e: Error) => void, getHtmlEmbedConfig?: () => { controlPanelOrigin: string, primaryMeshZ32: string } | null | undefined }} opts
+ * When {@code serveHtml} is true, browsers that send {@code Accept: text/html} get the React shell from {@code dist/} with the signed greeting injected as JSON.
+ * @param {{ bindAddress?: string, bindAddresses?: string[], port?: number, myPublicKeyZ32: string, secretKey: Buffer, fetchVisitorKeyLine: (ip: string) => Promise<string>, onError?: (e: Error) => void, serveHtml?: boolean }} opts
  */
 function createSpoonHelloServer (opts) {
   const raw =
@@ -122,8 +103,7 @@ function createSpoonHelloServer (opts) {
   const secretKey = opts.secretKey
   const fetchVisitorKeyLine = opts.fetchVisitorKeyLine
   const onError = typeof opts.onError === 'function' ? opts.onError : function () {}
-  const getHtmlEmbedConfig =
-    typeof opts.getHtmlEmbedConfig === 'function' ? opts.getHtmlEmbedConfig : null
+  const serveHtml = opts.serveHtml === true
 
   if (bindAddresses.length === 0) {
     throw new Error('spoon hello: bindAddress or bindAddresses is required')
@@ -177,8 +157,7 @@ function createSpoonHelloServer (opts) {
     const pathname = url.pathname
 
     const accept = String(req.headers.accept || '')
-    const wantHtml =
-      getHtmlEmbedConfig != null && accept.indexOf('text/html') !== -1
+    const wantHtml = serveHtml && accept.indexOf('text/html') !== -1
 
     Promise.resolve()
       .then(function () {
@@ -208,25 +187,7 @@ function createSpoonHelloServer (opts) {
         }
 
         if (wantHtml) {
-          const cfg = getHtmlEmbedConfig && getHtmlEmbedConfig()
-          const origin =
-            cfg && cfg.controlPanelOrigin != null
-              ? String(cfg.controlPanelOrigin).trim()
-              : ''
-          const z32 =
-            cfg && cfg.primaryMeshZ32 != null
-              ? String(cfg.primaryMeshZ32).trim()
-              : myPublicKeyZ32
-          if (!origin) {
-            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
-            res.end('html embed: control panel origin not configured\n')
-            return
-          }
-          const html = buildSpoonHelloHtmlPage(
-            plain,
-            JSON.stringify(origin),
-            JSON.stringify(z32)
-          )
+          const html = buildSpoonHelloHtmlPage(plain)
           const enc = 'utf8'
           if (req.method === 'HEAD') {
             res.writeHead(200, {

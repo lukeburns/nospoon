@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Populate {@link ../assets/v86} with libv86 + wasm from npm, BIOS from copy.sh, optional FreeBSD disk.
- * Same layout as nospoon {@link ../../scripts/copy-v86-assets.js} but scoped to this example.
+ * Guest layout matches copy.sh FreeBSD chunk names (`guest/freebsd/<start>-<end>.img`).
  *
  * Usage:
  *   node scripts/vendor-v86.mjs

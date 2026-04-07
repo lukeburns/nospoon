@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 /**
- * Esbuild dev server with node built-in polyfills (models browser bundling for node-centric apps).
+ * Esbuild dev server for the spoon-hello React shell.
  * Usage: npm run dev -- --port 5173 --host 127.0.0.1
  */
 import * as esbuild from 'esbuild'
-import { nodeModulesPolyfillPlugin } from 'esbuild-plugins-node-modules-polyfill'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const clientPath = join(root, '../../web/net/lib/browser-net-client.js')
 
 function parseArgs (argv) {
   let port = 5173
@@ -62,15 +60,7 @@ const ctx = await esbuild.context({
   format: 'esm',
   platform: 'browser',
   jsx: 'automatic',
-  sourcemap: true,
-  plugins: [
-    nodeModulesPolyfillPlugin({
-      globals: { process: true, Buffer: true }
-    })
-  ],
-  alias: {
-    'browser-net-shim': clientPath
-  }
+  sourcemap: true
 })
 
 await ctx.watch()
@@ -85,5 +75,5 @@ const browseHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
 const displayHost = host === '0.0.0.0' ? '0.0.0.0 (browse via 127.0.0.1)' : host
 console.log('')
 console.log(`spoon-hello dev  http://${browseHost}:${result.port}/`)
-console.log(`  (serving from ${displayHost}:${result.port}; browser-net defaults to control panel http://127.0.0.1:80)`)
+console.log(`  (serving from ${displayHost}:${result.port})`)
 console.log('')

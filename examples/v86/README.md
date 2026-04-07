@@ -25,9 +25,9 @@ npm run preview             # http://127.0.0.1:4173 — v86 at /v86/
 
 ## Overrides
 
-- **`?controlOrigin=http://…`** — load `/v86/*` from another host (e.g. nospoon control only).
+- **`?controlOrigin=http://…`** — load `/v86/*` from another origin (static preview, second dev server, etc.).
 - Same **`proxyHost`**, **`wsHost`**, **`whoisOrigin`**, … as **`examples/simple`**.
 
-## Repo root
+## Nospoon package
 
-You no longer need **`node scripts/copy-v86-assets.js`** in the main package for this example. The main app’s control panel can keep its own `lib/v86` copy for the embedded UI.
+The **`nospoon`** package no longer vendors or serves v86 assets; use this **`examples/v86`** tree (or copy its **`dist/v86`** layout) when you need the VM demo.

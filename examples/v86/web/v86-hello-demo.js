@@ -17,6 +17,12 @@ const IDB_NAME = 'nospoon-v86-example'
 const IDB_VER = 1
 const IDB_STORE = 'kv'
 
+const GUEST_PORT = 22
+const MESH_PORT = 22
+
+/** How often to retry the bridge probe while waiting for the guest. */
+const POLL_INTERVAL_MS = 5000
+
 function idbOpen () {
   return new Promise(function (resolve, reject) {
     const r = indexedDB.open(IDB_NAME, IDB_VER)
@@ -143,16 +149,11 @@ async function initV86HelloDemo (opts) {
   const controlPanelOrigin = String(opts.controlPanelOrigin || '').trim()
   const screenEl = document.getElementById('v86-screen-container')
   const logEl = document.getElementById('v86-log')
-  const startVmBtn = document.getElementById('v86-start-vm')
-  const stopVmBtn = document.getElementById('v86-stop-vm')
   const saveSnapBtn = document.getElementById('v86-save-snapshot')
   const clearSnapBtn = document.getElementById('v86-clear-snapshot')
-  const resumeIdbEl = document.getElementById('v86-resume-idb')
   const snapStatusEl = document.getElementById('v86-snapshot-status')
-  const startSshBtn = document.getElementById('v86-start-ssh')
   const stopSshBtn = document.getElementById('v86-stop-ssh')
-  const sshPortEl = document.getElementById('v86-ssh-port')
-  const guestPortEl = document.getElementById('v86-guest-port')
+  const bridgeStatusEl = document.getElementById('v86-bridge-status')
   const bindHostEl = document.getElementById('bindhost')
 
   function log (line) {
@@ -161,6 +162,19 @@ async function initV86HelloDemo (opts) {
       logEl.scrollTop = logEl.scrollHeight
     } else {
       console.error(line)
+    }
+  }
+
+  function setBridgeState (state) {
+    if (bridgeStatusEl) {
+      bridgeStatusEl.className = 'bridge-status bridge-status--' + state
+      bridgeStatusEl.title =
+        state === 'connected' ? 'Bridge connected'
+          : state === 'connecting' ? 'Connecting to guest…'
+          : 'Bridge off'
+    }
+    if (stopSshBtn) {
+      stopSshBtn.hidden = state !== 'connected'
     }
   }
 
@@ -200,6 +214,8 @@ async function initV86HelloDemo (opts) {
 
   let emulator = null
   let sshServer = null
+  let pollTimer = null
+  let macFixed = false
 
   function tcpProbeWithTimeout (na, port, ms) {
     let timer
@@ -267,20 +283,44 @@ async function initV86HelloDemo (opts) {
     return c
   }
 
-  function freebsdGuestReady () {
+  /** First 1 MiB chunk URL (must match copy.sh / vendor-v86 layout). */
+  const FREEBSD_PROBE_CHUNK_URL = new URL(
+    'guest/freebsd/0-1048576.img',
+    v86Base
+  ).href
+
+  async function probeFreebsdDiskChunkPresent () {
+    try {
+      let r = await fetch(FREEBSD_PROBE_CHUNK_URL, { method: 'HEAD' })
+      if (r.ok) return true
+      r = await fetch(FREEBSD_PROBE_CHUNK_URL, { headers: { Range: 'bytes=0-0' } })
+      return r.ok || r.status === 206
+    } catch (_) {
+      return false
+    }
+  }
+
+  async function freebsdGuestReady () {
+    if (freebsdMeta && freebsdMeta.diskChunksPresent === true) return true
+    const probed = await probeFreebsdDiskChunkPresent()
+    if (probed) {
+      if (freebsdMeta && freebsdMeta.diskChunksPresent !== true) {
+        log(
+          'guest/freebsd-meta.json says disk chunks missing, but guest/freebsd/0-1048576.img is reachable — cold boot will proceed. Regenerate meta: in this directory run `npm run vendor` (omit --freebsd-disk to rescan disk chunks only).'
+        )
+      }
+      return true
+    }
     if (!freebsdMeta) {
       log(
-        'Missing guest/freebsd-meta.json. From the nospoon package root run: node scripts/copy-v86-assets.js (or npm run build).'
+        'Missing guest/freebsd-meta.json and first disk chunk. From this example directory run `npm run vendor`.'
       )
       return false
     }
-    if (!freebsdMeta.diskChunksPresent) {
-      log(
-        'FreeBSD disk chunks are not installed (~2 GiB). From the package root run: npm run fetch-freebsd-disk'
-      )
-      return false
-    }
-    return true
+    log(
+      'FreeBSD disk chunks look missing (no response for guest/freebsd/0-1048576.img). From this example directory run `npm run fetch-freebsd-disk` (~2 GiB).'
+    )
+    return false
   }
 
   async function refreshSnapshotStatus () {
@@ -301,42 +341,175 @@ async function initV86HelloDemo (opts) {
 
   refreshSnapshotStatus()
 
-  if (!startVmBtn || !stopVmBtn) {
-    log('Missing v86 control elements in the page.')
-    return
-  }
-
-  startVmBtn.onclick = async function () {
-    if (emulator) {
-      log('VM already running.')
+  /**
+   * v86 NE2000 bug workaround — see earlier comments for full explanation.
+   * Temporarily enables promiscuous mode, sends a broadcast ARP to learn the
+   * guest's real MAC, patches ne2k.mac and na.vm_mac, restores filtering.
+   */
+  async function fixNe2kMacAfterRestore (na) {
+    if (macFixed) return
+    var ne2k
+    try {
+      ne2k = emulator.v86.cpu.devices.net
+    } catch (_) {
       return
     }
-    try {
-      if (sshServer) {
-        try {
-          sshServer.close()
-        } catch (_) {}
-        sshServer = null
-      }
-      let snap = null
-      if (resumeIdbEl && resumeIdbEl.checked) {
-        snap = await idbGetSnapshotBuffer()
-        if (!snap) {
-          log('Resume checked but no valid snapshot — cold boot from disk (long; click the v86 canvas first so the window has focus for keyboard).')
+    if (!ne2k || !na) return
+
+    ne2k.rxcr = ne2k.rxcr | 0x10
+
+    var realMac = null
+    var origSend = na.send
+    na.send = function (data) {
+      if (!realMac && data && data.length >= 14) {
+        var src = new Uint8Array(data.buffer || data, (data.byteOffset || 0) + 6, 6)
+        if (src[0] === 0x00 && src[1] === 0x22 && src[2] === 0x15) {
+          realMac = new Uint8Array(src)
         }
       }
-      if (!freebsdGuestReady()) {
+      return origSend.call(na, data)
+    }
+
+    var arp = new Uint8Array(42)
+    arp.set([0xff, 0xff, 0xff, 0xff, 0xff, 0xff], 0)
+    arp.set([0x52, 0x54, 0x00, 0x01, 0x02, 0x03], 6)
+    arp[12] = 0x08; arp[13] = 0x06
+    arp[14] = 0x00; arp[15] = 0x01
+    arp[16] = 0x08; arp[17] = 0x00
+    arp[18] = 6; arp[19] = 4
+    arp[20] = 0x00; arp[21] = 0x01
+    arp.set([0x52, 0x54, 0x00, 0x01, 0x02, 0x03], 22)
+    arp.set(na.router_ip, 28)
+    arp.set([0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 32)
+    arp.set(na.vm_ip, 38)
+    na.receive(arp)
+
+    await new Promise(function (r) { setTimeout(r, 500) })
+    na.send = origSend
+
+    if (realMac) {
+      var fmtMac = function (m) { return Array.from(m).map(function (b) { return b.toString(16).padStart(2, '0') }).join(':') }
+      log('Learned guest MAC: ' + fmtMac(realMac))
+      ne2k.mac = new Uint8Array(realMac)
+      na.vm_mac = new Uint8Array(realMac)
+      ne2k.rxcr = ne2k.rxcr & ~0x10
+      macFixed = true
+    }
+  }
+
+  /** Try to bring up the bridge. Returns true on success. */
+  async function tryStartBridge () {
+    if (!emulator || !emulator.network_adapter) return false
+    if (sshServer) return true
+    const na = emulator.network_adapter
+
+    await fixNe2kMacAfterRestore(na)
+
+    let open
+    try {
+      open = await tcpProbeWithTimeout(na, GUEST_PORT, 10000)
+    } catch (_) {
+      return false
+    }
+    if (!open) return false
+
+    const host =
+      bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
+    const server = new BrowserNetServer({ url: wsUrl })
+    server.addEventListener('connection', function (ev) {
+      const sock = ev.detail
+      let tcp = null
+      try {
+        tcp = na.connect(GUEST_PORT)
+      } catch (e) {
+        try { sock.end() } catch (_) {}
         return
+      }
+      tcp.on('data', function (u8) {
+        try { sock.write(u8) } catch (_) {}
+      })
+      tcp.on('close', function () {
+        try { sock.end() } catch (_) {}
+      })
+      tcp.on('shutdown', function () {
+        try { sock.end() } catch (_) {}
+      })
+      sock.addEventListener('data', function (e) {
+        if (tcp) tcp.write(new Uint8Array(e.data))
+      })
+      sock.addEventListener('close', function () {
+        try { if (tcp) tcp.close() } catch (_) {}
+        tcp = null
+      })
+    })
+    try {
+      if (host) {
+        await withTimeout(server.listen({ port: MESH_PORT, host }), 30000, 'listen')
+      } else {
+        await withTimeout(server.listen(MESH_PORT), 30000, 'listen')
+      }
+      sshServer = server
+      log('Bridge connected — mesh :' + MESH_PORT + ' → guest :' + GUEST_PORT)
+      return true
+    } catch (e) {
+      try { server.close() } catch (_) {}
+      const msg = e && e.message ? e.message : e
+      log('Bridge listen error: ' + msg)
+      return false
+    }
+  }
+
+  function stopBridge () {
+    if (sshServer) {
+      try { sshServer.close() } catch (_) {}
+      sshServer = null
+      log('Bridge disconnected.')
+    }
+  }
+
+  function stopPolling () {
+    if (pollTimer) {
+      clearTimeout(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  /** Poll until bridge connects, then stop. */
+  function startPolling () {
+    stopPolling()
+    setBridgeState('connecting')
+
+    async function tick () {
+      pollTimer = null
+      if (sshServer) {
+        setBridgeState('connected')
+        return
+      }
+      const ok = await tryStartBridge()
+      if (ok) {
+        setBridgeState('connected')
+      } else {
+        pollTimer = setTimeout(tick, POLL_INTERVAL_MS)
+      }
+    }
+
+    tick()
+  }
+
+  // --- Auto-start VM on page load ---
+  async function startVm () {
+    if (emulator) return
+    try {
+      let snap = await idbGetSnapshotBuffer()
+      if (!snap) {
+        if (!(await freebsdGuestReady())) return
+        log('No snapshot — cold-booting FreeBSD from disk (slow). After login, run dhclient on the ethernet interface; sshd on 22 when ready.')
+      } else {
+        if (!(await freebsdGuestReady())) return
       }
       emulator = new V86(v86BaseConfig(snap))
       if (snap) {
-        log(
-          'Restored VM from IndexedDB snapshot. Start bridge again when ready; if probe fails, fix guest networking (e.g. dhclient) and ensure sshd listens on the guest port.'
-        )
-      } else {
-        log(
-          'Cold-booting FreeBSD from disk (ne2k+ACPI, same RAM/disk as copy.sh) — first boot is slow. After login, run dhclient on the ethernet interface for the mesh bridge; sshd on 22 when ready.'
-        )
+        log('Restored VM from snapshot.')
       }
     } catch (e) {
       log('VM error: ' + (e && e.message ? e.message : e))
@@ -344,37 +517,56 @@ async function initV86HelloDemo (opts) {
     }
   }
 
-  stopVmBtn.onclick = async function () {
-    if (sshServer) {
-      try {
-        sshServer.close()
-      } catch (_) {}
-      sshServer = null
+  await startVm()
+
+  // --- Clipboard: intercept before v86's global keyboard handler ---
+  if (emulator) {
+    // v86 registers keyboard handlers globally.  We intercept in the
+    // capture phase on window so we see events first.  For modifier
+    // combos (Cmd/Ctrl + C/V/A/X) we stop propagation so v86 never
+    // receives them, letting the browser handle copy/paste natively.
+    function guardModifier (e) {
+      // Only intercept Cmd (Meta) combos for clipboard — let Ctrl through
+      // so Ctrl+C (SIGINT) etc. reach the guest.
+      if (e.metaKey && /^[acvx]$/i.test(e.key)) {
+        e.stopImmediatePropagation()
+      }
     }
-    if (emulator) {
-      try {
-        if (typeof emulator.destroy === 'function') await emulator.destroy()
-        else if (typeof emulator.stop === 'function') await emulator.stop()
-      } catch (_) {}
-      emulator = null
-      if (screenEl) screenEl.innerHTML = ''
-    }
-    log('VM stopped.')
+    window.addEventListener('keydown', guardModifier, true)
+    window.addEventListener('keyup', guardModifier, true)
+    window.addEventListener('keypress', guardModifier, true)
+
+    // Paste: send clipboard text into the guest as keystrokes.
+    document.addEventListener('paste', function (e) {
+      if (!emulator) return
+      // Only paste into the guest when the screen container has or is
+      // near focus (not when typing in an input elsewhere on the page).
+      var active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
+      var text = e.clipboardData && e.clipboardData.getData('text')
+      if (text) {
+        e.preventDefault()
+        emulator.keyboard_send_text(text)
+      }
+    })
+  }
+
+  // Begin polling for bridge connectivity
+  if (emulator) {
+    startPolling()
   }
 
   if (saveSnapBtn) {
     saveSnapBtn.onclick = async function () {
       if (!emulator) {
-        log('Start the VM before saving a snapshot.')
+        log('VM not running.')
         return
       }
+      stopPolling()
       if (sshServer) {
-        try {
-          sshServer.close()
-        } catch (_) {}
-        sshServer = null
-        log('Bridge stopped (required for a clean snapshot).')
+        stopBridge()
       }
+      setBridgeState('off')
       try {
         await emulator.stop()
         const raw = await emulator.save_state()
@@ -384,7 +576,7 @@ async function initV86HelloDemo (opts) {
         log(
           'Saved snapshot to IndexedDB (~' +
             Math.round(copy.byteLength / (1024 * 1024)) +
-            ' MiB). Check Resume before Start VM next time.'
+            ' MiB).'
         )
         await refreshSnapshotStatus()
       } catch (e) {
@@ -394,6 +586,8 @@ async function initV86HelloDemo (opts) {
           await emulator.run()
         } catch (_) {}
       }
+      // Resume polling after save
+      startPolling()
     }
   }
 
@@ -409,121 +603,11 @@ async function initV86HelloDemo (opts) {
     }
   }
 
-  if (startSshBtn) {
-    startSshBtn.onclick = async function () {
-      if (!emulator || !emulator.network_adapter) {
-        log('Start the VM first; wait until the guest TCP port you need is listening.')
-        return
-      }
-      if (sshServer) {
-        log('Bridge already running (Stop bridge first).')
-        return
-      }
-      const na = emulator.network_adapter
-      const guestPort = guestPortEl ? Number(guestPortEl.value) || 22 : 22
-      log('Probing guest TCP port ' + guestPort + ' (15s max)…')
-      let open
-      try {
-        open = await tcpProbeWithTimeout(na, guestPort, 15000)
-      } catch (e) {
-        log('Probe error: ' + (e && e.message ? e.message : e))
-        return
-      }
-      if (!open) {
-        log(
-          'Port ' +
-            guestPort +
-            ' not reachable (probe failed or timed out). In FreeBSD try `service sshd onestart` or `dhclient` if the guest lost its IP after resume; ensure sshd listens on that port.'
-        )
-        return
-      }
-      const port = sshPortEl ? Number(sshPortEl.value) || 2222 : 2222
-      const host =
-        bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
-      const server = new BrowserNetServer({ url: wsUrl })
-      server.addEventListener('connection', function (ev) {
-        const sock = ev.detail
-        let tcp = null
-        try {
-          tcp = na.connect(guestPort)
-        } catch (e) {
-          try {
-            sock.end()
-          } catch (_) {}
-          return
-        }
-        tcp.on('data', function (u8) {
-          try {
-            sock.write(u8)
-          } catch (_) {}
-        })
-        tcp.on('close', function () {
-          try {
-            sock.end()
-          } catch (_) {}
-        })
-        tcp.on('shutdown', function () {
-          try {
-            sock.end()
-          } catch (_) {}
-        })
-        sock.addEventListener('data', function (e) {
-          if (tcp) tcp.write(new Uint8Array(e.data))
-        })
-        sock.addEventListener('close', function () {
-          try {
-            if (tcp) tcp.close()
-          } catch (_) {}
-          tcp = null
-        })
-      })
-      try {
-        log('Opening browser-net WebSocket and binding mesh port ' + port + ' (30s max)…')
-        if (host) {
-          await withTimeout(server.listen({ port, host }), 30000, 'listen')
-        } else {
-          await withTimeout(server.listen(port), 30000, 'listen')
-        }
-        sshServer = server
-        log(
-          'Bridge: mesh TCP ' +
-            (host || 'primary') +
-            ':' +
-            port +
-            ' → guest :' +
-            guestPort +
-            '. Peers: `ssh -p ' +
-            port +
-            ' <mesh-host>` when the guest speaks SSH on that port (FreeBSD sshd on 22); use `nc` for raw TCP to other services.'
-        )
-      } catch (e) {
-        try {
-          server.close()
-        } catch (_) {}
-        sshServer = null
-        const msg = e && e.message ? e.message : e
-        log(
-          'listen error: ' +
-            msg +
-            (String(msg).indexOf('timeout') !== -1
-              ? ' — try Stop bridge, refresh the page, then Start VM and bridge again.'
-              : '')
-        )
-      }
-    }
-  }
-
   if (stopSshBtn) {
     stopSshBtn.onclick = function () {
-      if (sshServer) {
-        try {
-          sshServer.close()
-        } catch (_) {}
-        sshServer = null
-        log('Bridge stopped.')
-      } else {
-        log('No bridge is running.')
-      }
+      stopPolling()
+      stopBridge()
+      setBridgeState('off')
     }
   }
 }
