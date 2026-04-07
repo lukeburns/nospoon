@@ -40,7 +40,8 @@ const emptyStatus = {
       lastError: null,
       canUpload: false,
       heliaDhtClientMode: false,
-      heliaLibp2p: null
+      heliaLibp2p: null,
+      heliaMeshPeers: []
     }
   }
 }
@@ -1034,6 +1035,49 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                             · {row.type}
                             {row.verified ? '' : ' · pending'}
                           </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+              {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
+                <div className="ipfs-status-row ipfs-multiaddrs-row ipfs-mesh-peers-block">
+                  <span className="dim">Mesh IPFS peers</span>
+                  <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
+                    {i.heliaMeshPeers.map(function (row) {
+                      return (
+                        <li key={row.hyperKeyHex}>
+                          <span className="ipfs-mesh-peer-line">
+                            <code className="ipfs-multiaddr" title={row.hyperKeyHex}>
+                              {row.hyperKeyZ32}
+                            </code>
+                            <span className="dim"> → </span>
+                            <code className="ipfs-multiaddr" title={row.ipfsPeerId}>
+                              {row.primaryMultiaddr}
+                            </code>
+                            <span
+                              className={
+                                row.connected
+                                  ? 'ipfs-mesh-conn ipfs-mesh-conn-on'
+                                  : 'ipfs-mesh-conn ipfs-mesh-conn-off'
+                              }
+                            >
+                              {' '}
+                              ({row.connected ? 'connected' : 'disconnected'})
+                            </span>
+                          </span>
+                          {row.multiaddrs.length > 1 ? (
+                            <ul className="ipfs-mesh-alt-addrs meta-tight">
+                              {row.multiaddrs.slice(1).map(function (ma) {
+                                return (
+                                  <li key={ma}>
+                                    <code className="ipfs-multiaddr dim">{ma}</code>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          ) : null}
                         </li>
                       )
                     })}

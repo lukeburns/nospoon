@@ -562,6 +562,45 @@ button.ipfs-unseed-btn {
 .ipfs-recent-name {
   font-size: 10px;
 }
+.ipfs-mesh-peers-block {
+  align-items: flex-start;
+}
+.ipfs-mesh-peer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+}
+.ipfs-mesh-peer-list > li {
+  margin: 0.35rem 0;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+.ipfs-mesh-peer-list > li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.ipfs-mesh-peer-line {
+  display: block;
+  word-break: break-word;
+}
+.ipfs-mesh-alt-addrs {
+  list-style: none;
+  margin: 0.25rem 0 0 0.5rem;
+  padding: 0;
+  font-size: 10px;
+}
+.ipfs-mesh-conn {
+  font-weight: 600;
+  font-size: 11px;
+}
+.ipfs-mesh-conn-on {
+  color: color-mix(in srgb, #6d4 85%, var(--fg, #fff));
+}
+.ipfs-mesh-conn-off {
+  color: color-mix(in srgb, var(--dim, #888) 90%, var(--fg, #fff));
+}
 
 .virtual-interfaces-card {
   margin-top: 0.35rem;
