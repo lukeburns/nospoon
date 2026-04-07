@@ -475,18 +475,16 @@ async function initV86HelloDemo (opts) {
       wireEthernetBridge(iface)
       activeIface = iface
       log('Bridge connected — bound to ' + boundIp)
-      // Configure the guest's NIC with the mesh IP (delay for guest shell readiness)
+      // Configure the guest's NIC and restart sshd in daemon mode after
+      // snapshot restore (debug -ddd mode's rexec fails with ENOTCONN in the
+      // emulated environment because getpeername races with slow accept).
       setTimeout(function () {
         emulator.keyboard_send_text('ifconfig ed0 inet ' + boundIp + '/24\n')
       }, 1000)
-      // setTimeout(function () {
-      //   emulator.keyboard_send_scancodes([                                                                        
-      //     0x1D,       // Ctrl down                                                                                
-      //     0x26,       // L down                                                                                   
-      //     0xA6,       // L up                                                                                     
-      //     0x9D        // Ctrl up                                                                                  
-      //   ])
-      // }, 1000)
+      setTimeout(function () {
+        emulator.keyboard_send_text('killall sshd 2>/dev/null; /usr/sbin/sshd\n')
+        log('Sent sshd restart (daemon mode)')
+      }, 2500)
       return true
     } catch (e) {
       try { iface.close() } catch (_) {}
@@ -561,6 +559,8 @@ async function initV86HelloDemo (opts) {
   }
 
   await startVm()
+
+  if (emulator) window.__v86 = emulator
 
   // --- Clipboard: intercept before v86's global keyboard handler ---
   if (emulator) {
