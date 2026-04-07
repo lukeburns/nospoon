@@ -441,6 +441,12 @@ describe('key-address', function () {
     assert.equal(unwrapTunnelPayload(table, wire), null)
   })
 
+  it('unwrapTunnelPayload returns null for non-IP first nibble (in-band control)', function () {
+    const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
+    const controlLike = Buffer.from([0x00, 0x03, 0x7b, 0x7d])
+    assert.equal(unwrapTunnelPayload(table, controlLike), null)
+  })
+
   it('unregister removes peer mapping so the same IP can be reused', function () {
     const table = createKeyAddressTable({ localIp: '10.0.0.1', localKey: keyA })
     table.register('10.0.0.2', keyB)
