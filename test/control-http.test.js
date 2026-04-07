@@ -1,10 +1,30 @@
 'use strict'
 
-const { describe, it } = require('node:test')
+const { describe, it, before, after } = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
 const { ControlPlaneSessionManager } = require('../lib/control-http')
 
 describe('control-http', function () {
+  let prevHome
+  let tmpRoot
+
+  before(function () {
+    prevHome = process.env.NOSPOON_HOME
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nospoon-control-http-'))
+    process.env.NOSPOON_HOME = path.join(tmpRoot, 'home')
+  })
+
+  after(function () {
+    if (prevHome === undefined) delete process.env.NOSPOON_HOME
+    else process.env.NOSPOON_HOME = prevHome
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true })
+    } catch (_) {}
+  })
+
   it('ControlPlaneSessionManager exposes stable client z32 before any sessions', function () {
     const m = new ControlPlaneSessionManager()
     const s = m.getStatus()

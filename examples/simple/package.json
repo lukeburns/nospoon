@@ -2,9 +2,11 @@
   "name": "@nospoon/simple-browser-net",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal browser-net example: auto-listen from port 23, whois labels via http://whois/, single HTML bundle",
+  "description": "Model example: Node-style net service in the browser; static page is both UI client and virtual TCP server",
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "build:inline": "node scripts/build.mjs --inline",
+    "preview": "node scripts/preview.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.27.7",

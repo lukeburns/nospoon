@@ -38,7 +38,9 @@ const emptyStatus = {
       ipv4: null,
       httpPort: 80,
       lastError: null,
-      canUpload: false
+      canUpload: false,
+      heliaDhtClientMode: false,
+      heliaLibp2p: null
     }
   }
 }
@@ -624,6 +626,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
   const [mode, setMode] = useState('helia')
   const [gateway, setGateway] = useState('http://127.0.0.1:8080')
   const [dataDir, setDataDir] = useState('')
+  const [heliaDhtClient, setHeliaDhtClient] = useState(false)
 
   useEffect(
     function () {
@@ -632,6 +635,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
       setMode(ipfs.mode === 'external' ? 'external' : 'helia')
       setGateway(ipfs.externalGatewayUrl || 'http://127.0.0.1:8080')
       setDataDir(ipfs.dataDir || '')
+      setHeliaDhtClient(ipfs.heliaDhtClientMode === true)
     },
     [ipfs]
   )
@@ -684,7 +688,8 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
         enabled: en,
         mode,
         externalGatewayUrl: gateway.trim(),
-        dataDir: dataDir.trim()
+        dataDir: dataDir.trim(),
+        heliaDhtClientMode: heliaDhtClient
       })
         .then(function (j) {
           if (typeof onApplied === 'function') onApplied(j)
@@ -700,7 +705,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           setBusy(false)
         })
     },
-    [en, mode, gateway, dataDir, onApplied]
+    [en, mode, gateway, dataDir, heliaDhtClient, onApplied]
   )
 
   const uploadFile = useCallback(
@@ -913,6 +918,130 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               )}
             </span>
           </div>
+          {i.mode === 'helia' && i.heliaLibp2p ? (
+            <>
+              <div className="ipfs-status-row">
+                <span className="dim">libp2p peer</span>
+                <code className="ipfs-config-detail ipfs-peer-id" title={i.heliaLibp2p.peerId}>
+                  {i.heliaLibp2p.peerId}
+                </code>
+              </div>
+              <div className="ipfs-status-row">
+                <span className="dim">Swarm connections</span>
+                <span>{i.heliaLibp2p.connections}</span>
+              </div>
+              <div className="ipfs-status-row">
+                <span className="dim">DHT</span>
+                <span>
+                  {i.heliaDhtClientMode ? 'client mode' : 'server mode'}
+                  {typeof i.heliaLibp2p.nodeMajor === 'number' &&
+                  i.heliaLibp2p.nodeMajor < 22 ? (
+                    <span className="dim">
+                      {' '}
+                      · Node &lt; 22: QUIC listener disabled (use Node 22+ for{' '}
+                      <code>/quic-v1</code> like Kubo)
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+              <p className="dim meta-tight ipfs-libp2p-hint">
+                Count of open sessions to remote IPFS peers right now. The first address list is{' '}
+                <strong>verified</strong> dial addresses libp2p will advertise. Any multiaddr containing{' '}
+                <code>/p2p-circuit</code> is a <strong>relay path</strong> (dial via a public relay such as
+                bootstrap infra — e.g. <code>104.x</code> — not your home WAN). Kubo’s{' '}
+                <code>/ip4/76…/udp/12634/quic-v1</code>-style lines are <strong>direct</strong> NAT to your
+                router. Helia defaults to swarm <code>4011</code>; Kubo often uses <code>4001</code> with a
+                different external port — you need UPnP or manual forwards for <strong>4011</strong> too, or
+                set <code>NOSPOON_HELIA_SWARM_PORT</code> when Kubo is stopped. TCP/QUIC bind to the
+                default-route LAN IPv4 automatically (NAT-PMP + UPnP like Kubo);{' '}
+                <code>NOSPOON_HELIA_SWARM_BIND=wildcard</code> restores <code>0.0.0.0</code>,{' '}
+                <code>NOSPOON_HELIA_NAT_PMP=0</code> disables NAT-PMP. NAT-PMP is registered before UPnP
+                SSDP; if Kubo (or another node) already holds UDP <code>5350</code> on this machine, stop
+                it briefly to test Helia alone. Optional{' '}
+                <code>NOSPOON_HELIA_ANNOUNCE_NO_CIRCUIT=1</code> drops relay addrs from announcements (only if
+                you have a direct public path or <code>NOSPOON_HELIA_APPEND_ANNOUNCE</code>). UPnP
+                auto-confirm defaults on (<code>NOSPOON_HELIA_UPNP_AUTO_CONFIRM=0</code> to disable). Pinned
+                roots are re-announced periodically.
+              </p>
+              {i.heliaLibp2p.addressBuckets &&
+              Array.isArray(i.heliaLibp2p.addressBuckets.relay) &&
+              i.heliaLibp2p.addressBuckets.relay.length > 0 ? (
+                <p className="dim meta-tight ipfs-libp2p-hint">
+                  Address summary (verified):{' '}
+                  <strong>{i.heliaLibp2p.addressBuckets.relay.length}</strong> relay-circuit,{' '}
+                  <strong>{(i.heliaLibp2p.addressBuckets.local || []).length}</strong> local,{' '}
+                  <strong>{(i.heliaLibp2p.addressBuckets.public || []).length}</strong> public direct.
+                  {i.heliaLibp2p.announceNoCircuit ? (
+                    <>
+                      {' '}
+                      Relay addrs are <strong>omitted</strong> from announcements (
+                      <code>NOSPOON_HELIA_ANNOUNCE_NO_CIRCUIT</code>).
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+              <div className="ipfs-status-row">
+                <span className="dim">Dial queue</span>
+                <span>
+                  {Number(i.heliaLibp2p.dialQueued) || 0} queued
+                  {', '}
+                  {Number(i.heliaLibp2p.dialActive) || 0} active
+                </span>
+              </div>
+              <div className="ipfs-status-row">
+                <span className="dim">Peer store</span>
+                <span>{Number(i.heliaLibp2p.peerStorePeers) || 0} known</span>
+              </div>
+              <div className="ipfs-status-row ipfs-multiaddrs-row">
+                <span className="dim">Multiaddrs (verified)</span>
+                <ul className="ipfs-multiaddr-list meta-tight">
+                  {(i.heliaLibp2p.multiaddrs || []).map(function (ma) {
+                    return (
+                      <li key={ma}>
+                        <code className="ipfs-multiaddr">{ma}</code>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+              {Array.isArray(i.heliaLibp2p.listenMultiaddrs) &&
+              i.heliaLibp2p.listenMultiaddrs.length > 0 ? (
+                <div className="ipfs-status-row ipfs-multiaddrs-row">
+                  <span className="dim">Listen config</span>
+                  <ul className="ipfs-multiaddr-list meta-tight">
+                    {i.heliaLibp2p.listenMultiaddrs.map(function (ma) {
+                      return (
+                        <li key={'L' + ma}>
+                          <code className="ipfs-multiaddr">{ma}</code>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+              {Array.isArray(i.heliaLibp2p.addressDetails) &&
+              i.heliaLibp2p.addressDetails.length > 0 ? (
+                <div className="ipfs-status-row ipfs-multiaddrs-row">
+                  <span className="dim">Address candidates</span>
+                  <ul className="ipfs-multiaddr-list meta-tight">
+                    {i.heliaLibp2p.addressDetails.map(function (row) {
+                      const key = row.multiaddr + row.type + String(row.verified)
+                      return (
+                        <li key={key}>
+                          <code className="ipfs-multiaddr">{row.multiaddr}</code>
+                          <span className="dim">
+                            {' '}
+                            · {row.type}
+                            {row.verified ? '' : ' · pending'}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           {i.lastError ? (
             <p className="form-status err ipfs-status-err" role="alert">
               {i.lastError}
@@ -1065,6 +1194,23 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               />
             </label>
           )}
+          {mode === 'helia' ? (
+            <label className="policy-toggle-row dns-toggle-spaced">
+              <span className="policy-toggle-input">
+                <input
+                  type="checkbox"
+                  checked={heliaDhtClient}
+                  onChange={function (e) {
+                    setHeliaDhtClient(e.target.checked)
+                  }}
+                  disabled={busy}
+                />
+              </span>
+              <span className="policy-toggle-body">
+                Helia DHT client mode (skip full DHT server; use for constrained networks)
+              </span>
+            </label>
+          ) : null}
           <button type="submit" disabled={busy}>
             {busy ? 'Applying…' : 'Apply'}
           </button>
