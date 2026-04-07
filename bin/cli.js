@@ -70,7 +70,7 @@ function validateMtu (value) {
 }
 
 function parseWebFlags (args) {
-  const flags = { port: 80, primaryCidr: null }
+  const flags = { port: 80, primaryCidr: null, ipfsEnabled: true }
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
       printUsage()
@@ -87,6 +87,8 @@ function parseWebFlags (args) {
       flags.host = args[++i]
     } else if (args[i] === '--primary-cidr' && args[i + 1]) {
       flags.primaryCidr = validateCidr(args[++i], '--primary-cidr')
+    } else if (args[i] === '--no-ipfs') {
+      flags.ipfsEnabled = false
     } else if (args[i].startsWith('--')) {
       console.error(`Error: unknown web option: ${args[i]}`)
       process.exit(1)
@@ -285,6 +287,8 @@ Control plane (sudo for TUN when joining topics or peers):
   --port <num>          HTTP port (default: 80)
   --host <addr>         Bind address (default: auto loopback alias; DNS name nospoon when mesh DNS is on)
   --primary-cidr <c>    Fixed primary (direct pool) IPv4 CIDR instead of auto 10.0.x.1/24
+  --no-ipfs             Do not start embedded IPFS (Helia) / CID dweb; you can enable later in the UI
+                        (same if env NOSPOON_IPFS is 0, false, off, or no)
 
   From the repo, \`npm run dev\` runs the control server plus Vite (see scripts/dev-web.mjs).
 
@@ -318,11 +322,20 @@ peers.json format (keys may be z32 or 64 hex):
 async function runControlPlane (webArgv) {
   const { startControlHttpServer } = require('../lib/control-http')
   const flags = parseWebFlags(webArgv)
+  const envIpfs = process.env.NOSPOON_IPFS
+  if (
+    envIpfs !== undefined &&
+    envIpfs !== '' &&
+    /^(0|false|off|no)$/i.test(String(envIpfs).trim())
+  ) {
+    flags.ipfsEnabled = false
+  }
   const opts = {
     port: flags.port,
     primaryCidr: flags.primaryCidr
   }
   if (flags.host != null) opts.host = flags.host
+  if (flags.ipfsEnabled === false) opts.ipfsEnabled = false
   const { sessions, closeHttpServer, controlPanelRunningOnDisplay, keyLinkDisplay } =
     await startControlHttpServer(opts)
   console.log('')
