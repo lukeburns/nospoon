@@ -357,16 +357,10 @@ async function initV86HelloDemo (opts) {
       bridgeNet0SendHandler = null
     }
 
-    // Seed from NE2000's MAC register — even though it's the random constructor
-    // value (set_state bug), it matches the NE2000 receive filter. Using this
-    // instead of broadcast avoids FreeBSD dropping TCP on L2 broadcast frames.
+    // Never trust NE2000's MAC register after snapshot restore — the set_state
+    // bug gives a random constructor value that may differ from what the guest
+    // driver actually uses.  Start null and learn from the first outgoing frame.
     let guestMac = null
-    try {
-      const ne2k = emulator.v86.cpu.devices.net
-      if (ne2k && ne2k.mac && ne2k.mac.length === 6) {
-        guestMac = new Uint8Array(ne2k.mac)
-      }
-    } catch (_) {}
     const fmtIp = function (u8, off) { return u8[off] + '.' + u8[off + 1] + '.' + u8[off + 2] + '.' + u8[off + 3] }
     const fmtMac = function (u8, off) { return Array.from(u8.subarray(off, off + 6)).map(function (b) { return b.toString(16).padStart(2, '0') }).join(':') }
     const fmtPkt = function (ip) {
@@ -387,6 +381,8 @@ async function initV86HelloDemo (opts) {
     bridgeNet0SendHandler = function (ethFrame) {
       const u8 = new Uint8Array(ethFrame)
       if (u8.length < 14) return
+      var _et = (u8[12] << 8) | u8[13]
+      log('NET0-SEND len=' + u8.length + ' etherType=0x' + _et.toString(16) + ' srcMAC=' + fmtMac(u8, 6) + ' dstMAC=' + fmtMac(u8, 0))
 
       // Learn guest MAC from source field of outgoing frames
       if (!guestMac) {
@@ -448,6 +444,7 @@ async function initV86HelloDemo (opts) {
       frame.set(GATEWAY_MAC, 6)
       frame[12] = 0x08; frame[13] = 0x00
       frame.set(ipPkt, 14)
+      log('NET0-INJECT len=' + frame.length + ' dstMAC=' + fmtMac(frame, 0) + ' srcMAC=' + fmtMac(frame, 6))
       bus.send('net0-receive', frame)
     })
   }

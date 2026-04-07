@@ -478,8 +478,23 @@ function createBrowserNetMiddleware (opts) {
    */
   function attachWebSocketConnection (ws, _req) {
     ws._browserNetClientId = crypto.randomBytes(4).toString('hex')
+    const _cid = ws._browserNetClientId
+    console.error('[ws-lifecycle] open cid=' + _cid)
+    ws.on('close', function (code, reason) { console.error('[ws-lifecycle] close cid=' + _cid + ' code=' + code + ' reason=' + reason) })
+    ws.on('error', function (err) { console.error('[ws-lifecycle] error cid=' + _cid + ' ' + (err && err.message)) })
+    const _origSend = ws.send.bind(ws)
+    ws.send = function (data, opts, cb) {
+      if (Buffer.isBuffer(data) && data.length > 0 && data[0] === RAW_IP_TAG) {
+        const p = data.subarray ? data.subarray(1) : data.slice(1)
+        const src = p.length >= 16 ? (p[12] + '.' + p[13] + '.' + p[14] + '.' + p[15]) : '?'
+        const dst = p.length >= 20 ? (p[16] + '.' + p[17] + '.' + p[18] + '.' + p[19]) : '?'
+        console.error('[ws-tx→browser] cid=' + _cid + ' RAW_IP src=' + src + ' dst=' + dst + ' len=' + p.length)
+      }
+      return _origSend(data, opts, cb)
+    }
     function browserNetWsMessage (data, isBinary) {
       if (isBinary && Buffer.isBuffer(data)) {
+        console.error('[ws-rx←browser] cid=' + _cid + ' binary len=' + data.length + ' tag=0x' + data[0].toString(16))
         if (data.length < 2) return
         if (data[0] === RAW_IP_TAG) {
           // Interface mode: raw IP packet from the browser, route to mesh.
@@ -489,7 +504,10 @@ function createBrowserNetMiddleware (opts) {
           const dstIp = `${pkt[16]}.${pkt[17]}.${pkt[18]}.${pkt[19]}`
           const route = getOutboundRoute(dstIp, ws)
           if (route && typeof route.writeFramed === 'function') {
+            console.error('[iface-tx] dst=' + dstIp + ' len=' + pkt.length + ' → route OK peer=' + route.peerKeyHex.slice(0, 8))
             sendFramedIpv4(route.writeFramed, pkt)
+          } else {
+            console.error('[iface-tx] dst=' + dstIp + ' len=' + pkt.length + ' → NO ROUTE')
           }
           return
         }
@@ -509,6 +527,7 @@ function createBrowserNetMiddleware (opts) {
       }
       if (!msg || typeof msg !== 'object') return
       const op = msg.op
+      console.error('[ws-rx←browser] cid=' + _cid + ' json op=' + op)
       if (op === 'hello') {
         try {
           ws.send(JSON.stringify({ op: 'hello_ok', v: 1 }))
