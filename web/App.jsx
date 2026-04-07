@@ -1041,49 +1041,60 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   </ul>
                 </div>
               ) : null}
-              {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
-                <div className="ipfs-status-row ipfs-multiaddrs-row ipfs-mesh-peers-block">
-                  <span className="dim">Mesh IPFS peers</span>
-                  <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
-                    {i.heliaMeshPeers.map(function (row) {
-                      return (
-                        <li key={row.hyperKeyHex}>
-                          <span className="ipfs-mesh-peer-line">
-                            <code className="ipfs-multiaddr" title={row.hyperKeyHex}>
-                              {row.hyperKeyZ32}
-                            </code>
-                            <span className="dim"> → </span>
-                            <code className="ipfs-multiaddr" title={row.ipfsPeerId}>
-                              {row.primaryMultiaddr}
-                            </code>
-                            <span
-                              className={
-                                row.connected
-                                  ? 'ipfs-mesh-conn ipfs-mesh-conn-on'
-                                  : 'ipfs-mesh-conn ipfs-mesh-conn-off'
-                              }
-                            >
-                              {' '}
-                              ({row.connected ? 'connected' : 'disconnected'})
+              <div className="ipfs-status-row ipfs-multiaddrs-row ipfs-mesh-peers-block">
+                <span className="dim">Mesh IPFS peers</span>
+                <div className="ipfs-mesh-peers-body meta-tight">
+                  {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
+                    <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
+                      {i.heliaMeshPeers.map(function (row) {
+                        return (
+                          <li key={row.hyperKeyHex}>
+                            <span className="ipfs-mesh-peer-line">
+                              <code className="ipfs-multiaddr" title={row.hyperKeyHex}>
+                                {row.hyperKeyZ32}
+                              </code>
+                              <span className="dim"> → </span>
+                              <code className="ipfs-multiaddr" title={row.ipfsPeerId}>
+                                {row.primaryMultiaddr}
+                              </code>
+                              <span
+                                className={
+                                  row.connected
+                                    ? 'ipfs-mesh-conn ipfs-mesh-conn-on'
+                                    : 'ipfs-mesh-conn ipfs-mesh-conn-off'
+                                }
+                              >
+                                {' '}
+                                ({row.connected ? 'connected' : 'disconnected'})
+                              </span>
                             </span>
-                          </span>
-                          {row.multiaddrs.length > 1 ? (
-                            <ul className="ipfs-mesh-alt-addrs meta-tight">
-                              {row.multiaddrs.slice(1).map(function (ma) {
-                                return (
-                                  <li key={ma}>
-                                    <code className="ipfs-multiaddr dim">{ma}</code>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          ) : null}
-                        </li>
-                      )
-                    })}
-                  </ul>
+                            {row.multiaddrs.length > 1 ? (
+                              <ul className="ipfs-mesh-alt-addrs meta-tight">
+                                {row.multiaddrs.slice(1).map(function (ma) {
+                                  return (
+                                    <li key={ma}>
+                                      <code className="ipfs-multiaddr dim">{ma}</code>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : null}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="dim ipfs-mesh-peers-empty">
+                      No mesh announces recorded yet. Rows appear only when a remote peer sends nospoon’s
+                      in-tunnel Helia handshake on the <strong>same Hyperswarm stream</strong> as the VPN mesh
+                      (not from Kubo or arbitrary libp2p). Both sides need the <strong>control-plane</strong>{' '}
+                      stack (<code>nospoon web</code> / server with DNS + IPFS), embedded Helia on, and this
+                      build; <code>nospoon client</code> does not exchange these frames. Disable with{' '}
+                      <code>NOSPOON_HELIA_MESH_ANNOUNCE=0</code>.
+                    </p>
+                  )}
                 </div>
-              ) : null}
+              </div>
             </>
           ) : null}
           {i.lastError ? (

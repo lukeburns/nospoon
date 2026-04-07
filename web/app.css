@@ -565,6 +565,15 @@ button.ipfs-unseed-btn {
 .ipfs-mesh-peers-block {
   align-items: flex-start;
 }
+.ipfs-mesh-peers-body {
+  flex: 1;
+  min-width: 0;
+}
+p.ipfs-mesh-peers-empty {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
 .ipfs-mesh-peer-list {
   list-style: none;
   margin: 0;
