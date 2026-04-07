@@ -7,6 +7,7 @@
  */
 
 const { BrowserNetInterface, defaultBrowserNetWsUrl } = require('browser-net-shim')
+const { whoisUrlSelf } = require('./env.js')
 
 /** Bump if snapshot format or guest config changes and old blobs must be ignored. */
 const SNAPSHOT_SCHEMA = 3
@@ -19,6 +20,9 @@ const IDB_STORE = 'kv'
 
 /** How often to retry bind_interface while waiting for the mesh. */
 const POLL_INTERVAL_MS = 5000
+
+/** Hard-coded topic for this demo. */
+const BIND_TOPIC = 'v86'
 
 /** Fixed MAC for our virtual gateway (Ethernet framing). */
 const GATEWAY_MAC = new Uint8Array([0x52, 0x54, 0x00, 0x01, 0x02, 0x03])
@@ -308,6 +312,35 @@ async function initV86HelloDemo (opts) {
 
   refreshSnapshotStatus()
 
+  /** @type {((ethFrame: unknown) => void) | null} */
+  let bridgeNet0SendHandler = null
+
+  /**
+   * v86's {@code relay_url: "fetch"} adapter registers {@code net0-send} and runs {@code Hb()} on
+   * every guest frame. For TCP flows it did not originate (e.g. inbound SYN to {@code nc -l}),
+   * {@code Hb} injects RST into the guest — so you see RX logs but never TX / no SYN-ACK on the mesh.
+   * Raw mesh traffic must not go through that path; drop only the adapter's listener.
+   * @param {{ network_adapter?: object, bus?: { listeners?: Record<string, Array<{ this_value?: object }>> }, _nospoonStrippedV86FetchNet0Send?: boolean }} em
+   */
+  function stripBuiltinFetchNet0Send (em) {
+    if (!em || em._nospoonStrippedV86FetchNet0Send) return
+    const na = em.network_adapter
+    const listeners = em.bus && em.bus.listeners
+    if (!na || !listeners) return
+    const key = 'net0-send'
+    const arr = listeners[key]
+    if (!Array.isArray(arr)) return
+    const kept = arr.filter(function (ent) {
+      return ent.this_value !== na
+    })
+    if (kept.length === arr.length) return
+    listeners[key] = kept
+    em._nospoonStrippedV86FetchNet0Send = true
+    log(
+      'Detached v86 built-in net0-send (fetch NAT) so raw mesh TCP is not RST’d — guest handles real IP/TCP.'
+    )
+  }
+
   /**
    * Hook v86's NE2000 bus to forward raw IPv4 packets through a BrowserNetInterface.
    * Handles ARP at the Ethernet level so the guest can resolve any IP to our
@@ -315,6 +348,15 @@ async function initV86HelloDemo (opts) {
    */
   function wireEthernetBridge (iface) {
     const bus = emulator.bus
+    stripBuiltinFetchNet0Send(emulator)
+
+    if (bridgeNet0SendHandler) {
+      try {
+        bus.unregister('net0-send', bridgeNet0SendHandler)
+      } catch (_) {}
+      bridgeNet0SendHandler = null
+    }
+
     // Seed from NE2000's MAC register — even though it's the random constructor
     // value (set_state bug), it matches the NE2000 receive filter. Using this
     // instead of broadcast avoids FreeBSD dropping TCP on L2 broadcast frames.
@@ -342,7 +384,7 @@ async function initV86HelloDemo (opts) {
       return s
     }
 
-    bus.register('net0-send', function (ethFrame) {
+    bridgeNet0SendHandler = function (ethFrame) {
       const u8 = new Uint8Array(ethFrame)
       if (u8.length < 14) return
 
@@ -393,7 +435,8 @@ async function initV86HelloDemo (opts) {
         log('TX ' + fmtPkt(ip))
         iface.send(ip)
       }
-    })
+    }
+    bus.register('net0-send', bridgeNet0SendHandler)
 
     iface.on('packet', function (ev) {
       const ipPkt = ev.data
@@ -414,8 +457,21 @@ async function initV86HelloDemo (opts) {
     if (!emulator) return false
     if (activeIface) return true
 
-    const host =
-      bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
+    let host = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
+    if (!host) {
+      // Fetch our z32 public key and bind to <z32>.v86
+      try {
+        const r = await fetch(whoisUrlSelf())
+        if (r.ok) {
+          const z32 = (await r.text()).trim().split(/\r?\n/)[0].trim()
+          if (z32) host = z32 + '.' + BIND_TOPIC
+        }
+      } catch (_) {}
+    }
+    if (!host) {
+      log('Bridge bind error: could not resolve local key for topic ' + BIND_TOPIC)
+      return false
+    }
     const iface = new BrowserNetInterface({ url: wsUrl })
     try {
       const boundIp = await iface.bind(host)
@@ -444,6 +500,12 @@ async function initV86HelloDemo (opts) {
   }
 
   function stopBridge () {
+    if (emulator && bridgeNet0SendHandler) {
+      try {
+        emulator.bus.unregister('net0-send', bridgeNet0SendHandler)
+      } catch (_) {}
+      bridgeNet0SendHandler = null
+    }
     if (activeIface) {
       try { activeIface.close() } catch (_) {}
       activeIface = null
