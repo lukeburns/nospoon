@@ -70,7 +70,7 @@ function validateMtu (value) {
 }
 
 function parseWebFlags (args) {
-  const flags = { port: 80, primaryCidr: null, ipfsEnabled: true }
+  const flags = { port: 80, primaryCidr: null, ipfsEnabled: true, noSystemDns: false }
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
       printUsage()
@@ -89,6 +89,10 @@ function parseWebFlags (args) {
       flags.primaryCidr = validateCidr(args[++i], '--primary-cidr')
     } else if (args[i] === '--no-ipfs') {
       flags.ipfsEnabled = false
+    } else if (args[i] === '--no-system-dns') {
+      flags.noSystemDns = true
+    } else if (args[i] === '--darwin-system-dns') {
+      /* legacy no-op: system DNS override is on by default */
     } else if (args[i].startsWith('--')) {
       console.error(`Error: unknown web option: ${args[i]}`)
       process.exit(1)
@@ -289,6 +293,8 @@ Control plane (sudo for TUN when joining topics or peers):
   --primary-cidr <c>    Fixed primary (direct pool) IPv4 CIDR instead of auto 10.0.x.1/24
   --no-ipfs             Do not start embedded IPFS (Helia) / CID dweb; you can enable later in the UI
                         (same if env NOSPOON_IPFS is 0, false, off, or no)
+  --no-system-dns       Do not change OS DNS / search domains (default is to use 127.0.0.1 while mesh DNS runs on :53)
+                        (or set env NOSPOON_SYSTEM_DNS=0; legacy: NOSPOON_DARWIN_SYSTEM_DNS=0)
 
   From the repo, \`npm run dev\` runs the control server plus Vite (see scripts/dev-web.mjs).
 
@@ -336,6 +342,7 @@ async function runControlPlane (webArgv) {
   }
   if (flags.host != null) opts.host = flags.host
   if (flags.ipfsEnabled === false) opts.ipfsEnabled = false
+  if (flags.noSystemDns) opts.systemDnsOverride = false
   const { sessions, closeHttpServer, controlPanelRunningOnDisplay, keyLinkDisplay } =
     await startControlHttpServer(opts)
   console.log('')

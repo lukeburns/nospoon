@@ -48,6 +48,9 @@ describe('control-http', function () {
     assert.equal(s.dns.ipfsDweb.browserNetDweb.dnsHost, 'middle')
     assert.equal(s.dns.enabled, true)
     assert.equal(s.dns.listening, false)
+    assert.ok(s.dns.systemDnsOverride)
+    assert.equal(s.dns.systemDnsOverride.enabled, true)
+    assert.equal(s.dns.systemDnsOverride.active, false)
     return m.destroy()
   })
 
