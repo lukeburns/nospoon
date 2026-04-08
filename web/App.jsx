@@ -1089,7 +1089,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                       in-tunnel Helia handshake on the <strong>same Hyperswarm stream</strong> as the VPN mesh
                       (not from Kubo or arbitrary libp2p). Both sides need the <strong>control-plane</strong>{' '}
                       stack (<code>nospoon web</code> / server with DNS + IPFS), embedded Helia on, and this
-                      build; <code>nospoon client</code> does not exchange these frames. Disable with{' '}
+                      build; standalone <code>createClient</code> / hub clients do not exchange these frames. Disable with{' '}
                       <code>NOSPOON_HELIA_MESH_ANNOUNCE=0</code>.
                     </p>
                   )}

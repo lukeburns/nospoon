@@ -36,7 +36,7 @@ TUN). IPv4 inside the tunnel uses **key-address** encoding on the wire.
          | raw IP (dst 10.0.0.2)                     | raw IP
          | key-address wrap + length frame           | unwrap → raw IP
 +--------v---------+   Noise-encrypted    +---------v--------+
-| nospoon client   | <===== DHT =========> | nospoon server   |
+| createClient()   | <===== DHT =========> | startServer()    |
 +------------------+     stream           +------------------+
                               ^
          Spokes get .2, .3, … on the hub; hub directory can tell clients
@@ -56,10 +56,10 @@ through unchanged on the wire in the current design.
 
 ## Operating modes
 
-### Hub / spoke (`server` + `client`)
+### Hub / spoke (`startServer` + `createClient`)
 
-One process runs **`nospoon server`** (the hub). Others run
-**`nospoon client <hub-public-key>`** and connect with HyperDHT to that
+One process runs **`startServer()`** from the **`nospoon`** package (the hub). Others run
+**`createClient({ key: <hub-public-key-hex>, ... })`** and connect with HyperDHT to that
 public key. In **open** mode the hub assigns incremental peer aliases
 (`.2`, `.3`, …) in its `--ip` subnet and registers them in a key-address
 table. **Authenticated** mode uses `--config` (`peers.json`) or positional
@@ -85,21 +85,21 @@ payloads. There is no separate hub: every participant runs the same mesh logic.
 relay of tun frames through a third peer). Mappings from public key to local IPv4
 alias are **ephemeral** for now (no persistence across restarts).
 
-### Default IPv4 (`server`, `client`, `swarm`)
+### Default IPv4 (`startServer`, `createClient`, `swarm`)
 
-Unless **`--ip`** is set, **`cli.js`** reads addresses on local interfaces
-(`collectAssignedIpv4Addresses`) and picks the first free **`10.0.n.1/24`** in
-`10.0.0.0/16`. For **client**, the hub alias is **`10.0.n.2`** for the same `n`.
-**Exception:** **`nospoon server --config …`** without **`--ip`** skips this scan
-and uses **`10.0.0.1/24`** so `peers.json` IPs in that subnet stay valid. **`--peer-ip`**
-without **`--ip`** is an error (explicit subnet required).
+Unless **`ip`** is set, **`cli.js`** (for **`swarm`**) and **`createClient`** read addresses on local interfaces
+(`collectAssignedIpv4Addresses`) and pick the first free **`10.0.n.1/24`** in
+`10.0.0.0/16`. For **`createClient`**, the hub alias is **`10.0.n.2`** for the same `n`.
+**Exception:** **`startServer({ config })`** without **`ip`** skips this scan
+and uses **`10.0.0.1/24`** so `peers.json` IPs in that subnet stay valid. **`peerIp`**
+without **`ip`** is an error (explicit subnet required).
 
 
 ## File Map
 
 ```
 bin/
-  cli.js              CLI: server, client, swarm, genkey; default IPv4 pick; validation
+  cli.js              CLI: default control plane, swarm, genkey; default IPv4 pick for swarm; validation
 
 lib/
   server.js           HyperDHT server, TUN, key-address, hub directory broadcast
@@ -132,11 +132,11 @@ test/
 ### 1. Server starts
 
 ```
-sudo nospoon server --config peers.json
+node hub.js   # script that calls startServer({ config: 'peers.json' })
 ```
 
-1. `cli.js` parses arguments, applies default IPv4 unless `--ip` / `--config` rules say otherwise, calls `startServer()`
-2. `startServer()` generates a key pair from a random seed (or `--seed`)
+1. Your entrypoint (or tests) calls `startServer(opts)` with optional `ip` / `config` / `seed` / etc.
+2. `startServer()` generates a key pair from a random seed (or `opts.seed`)
 3. Creates a TUN via `createTunDevice()` — assigns IP, sets MTU
 4. Creates a `router` and, in open or allowlist hub mode, a **key-address**
    table plus peer IP allocator / hub directory state as needed
@@ -147,11 +147,11 @@ sudo nospoon server --config peers.json
 ### 2. Client connects
 
 ```
-sudo nospoon client <server-public-key> --seed <client-seed>
+node client.js   # script that calls createClient({ key, seed, ... })
 ```
 
-1. `cli.js` parses arguments, applies default IPv4 unless `--ip` is set, calls `startClient()`
-2. Creates a TUN (e.g. first free `10.0.x.1/24` with hub at `10.0.x.2`, or explicit `--ip` / `--peer-ip`)
+1. Your entrypoint calls `createClient(opts)` (or `startClient` for CLI-style signal handling), applying default IPv4 unless `ip` is set
+2. Creates a TUN (e.g. first free `10.0.x.1/24` with hub at `10.0.x.2`, or explicit `ip` / `peerIp`)
 3. Calls `dht.connect(serverPublicKey)` — NAT traversal, Noise stream
 4. The server's `firewall` runs (auth vs open)
 5. On `open`, client registers the hub key at the local alias IP, may apply
@@ -160,7 +160,7 @@ sudo nospoon client <server-public-key> --seed <client-seed>
 ### 3. Packets flow
 
 **Client -> Server (IPv4 key-address):**
-1. App on client sends packet to the hub alias (e.g. 10.0.0.2 in open mode with `--peer-ip`)
+1. App on client sends packet to the hub alias (e.g. 10.0.0.2 in open mode with `peerIp`)
 2. OS routes it to tun0 (because 10.0.0.0/24 is routed there)
 3. `tun.on('data')` fires in `client.js` with the raw IPv4 packet
 4. Client calls `wrapTunnelPayload(ka, packet)` — replaces IPv4 header src/dst with
@@ -305,7 +305,7 @@ all hub connections when someone joins or leaves.
 ### client.js — The Client
 
 **Key-address:** On connect, builds a key-address table with local TUN IP and
-registers the **hub** at `--peer-ip` (default **`10.0.n.2`** when the CLI picked
+registers the **hub** at **`peerIp`** (default **`10.0.n.2`** when defaults picked
 **`10.0.n.1/24`**, or **`10.0.0.2`** when using explicit **`10.0.0.1/24`**).
 
 **Hub directory:** When a directory frame arrives, `applyHubDirectory`

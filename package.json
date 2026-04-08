@@ -13,8 +13,6 @@
     "nospoon": "bin/cli.js"
   },
   "scripts": {
-    "server": "node bin/cli.js server",
-    "client": "node bin/cli.js client",
     "test": "node --test test/*.test.js",
     "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify && esbuild web/browser-net-shim.js --bundle --outfile=lib/browser-net-shim.bundle.js --format=esm --platform=browser --minify",
     "build:examples": "npm run build:simple && npm run build:spoon-hello && npm run build:v86",
@@ -63,6 +61,7 @@
     "lib/dns-system-override-darwin.js",
     "lib/dns-system-override-linux.js",
     "lib/dns-system-override.js",
+    "lib/dns-restore-merge.js",
     "lib/whois-auth-proxy.js",
     "lib/ipfs-cid-dns.js",
     "lib/ipfs-dweb-http.js",

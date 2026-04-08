@@ -11,4 +11,11 @@ describe('dns-system-override (facade)', function () {
     assert.equal(isActive(), false)
     restore()
   })
+
+  it('restore with dnsServers is a no-op when override was never applied', function () {
+    assert.doesNotThrow(function () {
+      restore({ dnsServers: ['9.9.9.9'] })
+    })
+    assert.equal(isActive(), false)
+  })
 })
