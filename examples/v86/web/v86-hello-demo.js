@@ -7,7 +7,6 @@
  */
 
 const { BrowserNetInterface, defaultBrowserNetWsUrl } = require('browser-net-shim')
-const { resolveVirtualListenHost, pageHostname } = require('./env.js')
 
 /** Bump if snapshot format or guest config changes and old blobs must be ignored. */
 const SNAPSHOT_SCHEMA = 4
@@ -451,15 +450,10 @@ async function initV86HelloDemo (opts) {
     if (!emulator) return false
     if (activeIface) return true
 
-    let host = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
-    if (!host) host = await resolveVirtualListenHost()
-    if (!host) {
-      log('Bridge bind error: could not resolve virtual listen host from ' + pageHostname())
-      return false
-    }
+    const explicitHost = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : undefined
     const iface = new BrowserNetInterface({ url: wsUrl })
     try {
-      const boundIp = await iface.bind(host)
+      const boundIp = await iface.bind(explicitHost)
       wireEthernetBridge(iface)
       activeIface = iface
       iface.on('disconnect', function () {

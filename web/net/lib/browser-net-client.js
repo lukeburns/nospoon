@@ -492,7 +492,8 @@ export class BrowserNetInterface extends EventTarget {
   /**
    * Bind to an IP address. The middleware will forward all raw IP packets
    * destined for this IP to this interface.
-   * @param {string} host — IPv4 address or mesh DNS name
+   * When {@code host} is omitted the server derives it from the WebSocket Origin.
+   * @param {string} [host] — IPv4 address or mesh DNS name (optional)
    * @returns {Promise<string>} — the resolved bind IP
    */
   async bind (host) {
