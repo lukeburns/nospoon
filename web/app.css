@@ -6,6 +6,7 @@
   --acc: #58a6ff;
   --ok: #3fb950;
   --err: #f85149;
+  --reserved: #a371f7;
 }
 * {
   box-sizing: border-box;
@@ -51,12 +52,14 @@ h2 {
 }
 a.ok,
 a.bad,
-a.dim {
+a.dim,
+a.reserved {
   text-decoration: none;
 }
 a.ok:hover,
 a.bad:hover,
-a.dim:hover {
+a.dim:hover,
+a.reserved:hover {
   text-decoration: underline;
 }
 a.ok {
@@ -67,6 +70,12 @@ a.bad {
 }
 a.dim {
   color: var(--muted);
+}
+.reserved {
+  color: var(--reserved);
+}
+a.reserved {
+  color: var(--reserved);
 }
 a.peer-key-link {
   color: inherit;

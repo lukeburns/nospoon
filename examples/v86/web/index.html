@@ -26,47 +26,7 @@
     <pre id="v86-log" class="v86-log" aria-label="Log"></pre>
   </section>
 
-  <script>
-  (function(){
-    var CP='http://10.254.0.1',q=[],t=null,lastLen=0;
-    function flush(){
-      if(!q.length)return;var b=q.splice(0,50);
-      try{var x=new XMLHttpRequest();x.open('POST',CP+'/api/browser-log',true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(b))}catch(_){}
-    }
-    function push(s){q.push(s);if(!t)t=setTimeout(function(){t=null;flush()},100)}
-    var origLog=console.log.bind(console),origErr=console.error.bind(console);
-    console.log=function(){var a=[].slice.call(arguments).map(String).join(' ');push('[console.log] '+a);origLog.apply(console,arguments)};
-    console.error=function(){var a=[].slice.call(arguments).map(String).join(' ');push('[console.err] '+a);origErr.apply(console,arguments)};
-    window.addEventListener('error',function(e){push('[uncaught] '+e.message)});
-    window.addEventListener('DOMContentLoaded',function(){
-      var el=document.getElementById('v86-log');
-      if(!el){push('v86-log element not found');return}
-      var obs=new MutationObserver(function(){
-        var txt=el.textContent||'';
-        if(txt.length>lastLen){
-          var newLines=txt.substring(lastLen).split('\n').filter(Boolean);
-          newLines.forEach(function(l){push(l)});
-          lastLen=txt.length;
-        }
-      });
-      obs.observe(el,{childList:true,characterData:true,subtree:true});
-      push('remote-console attached');
-    });
-    setInterval(function(){
-      try{
-        var x=new XMLHttpRequest();x.open('GET',CP+'/api/browser-cmd',false);x.send();
-        if(x.status===200){
-          var cmds=JSON.parse(x.responseText);
-          cmds.forEach(function(cmd){
-            var em=window.__v86;
-            if(!em){push('[cmd] no emulator');return}
-            if(cmd.type==='keyboard'){em.keyboard_send_text(cmd.text);push('[cmd] sent: '+cmd.text.replace(/\n/g,'\\n'))}
-          });
-        }
-      }catch(_){}
-    },1000);
-  })();
-  </script>
+  <script src="nospoon-debug.js"></script>
   <script src="bundle.js" defer></script>
 </body>
 </html>

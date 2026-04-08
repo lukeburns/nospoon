@@ -121,6 +121,28 @@ function createHubState (url) {
         state._opening = null
         resolve()
       })
+      ws.addEventListener('close', function () {
+        if (state.ws === ws) state.ws = null
+        state._opening = null
+        var iface = state.activeInterface
+        if (iface && iface._bound) {
+          iface._bound = false
+          try { iface.dispatchEvent(new Event('disconnect')) } catch (_) {}
+        }
+        var srv = state.activeServer
+        if (srv && srv._listening) {
+          srv._listening = false
+          try { srv.dispatchEvent(new Event('disconnect')) } catch (_) {}
+        }
+        for (var sock of state.streams.values()) {
+          try { sock.destroy() } catch (_) {}
+        }
+        state.streams.clear()
+        for (var p of state.connectPending.values()) {
+          try { p.reject(new Error('WebSocket closed')) } catch (_) {}
+        }
+        state.connectPending.clear()
+      })
       ws.addEventListener('error', function () {
         state._opening = null
         reject(new Error('WebSocket error'))

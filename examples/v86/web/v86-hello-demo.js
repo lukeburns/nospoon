@@ -7,10 +7,10 @@
  */
 
 const { BrowserNetInterface, defaultBrowserNetWsUrl } = require('browser-net-shim')
-const { whoisUrlSelf } = require('./env.js')
+const { resolveVirtualListenHost, pageHostname } = require('./env.js')
 
 /** Bump if snapshot format or guest config changes and old blobs must be ignored. */
-const SNAPSHOT_SCHEMA = 3
+const SNAPSHOT_SCHEMA = 4
 /** Must match: 256M RAM, 8M VGA, ACPI, ne2k+fetch, v86 0.5.319, FreeBSD disk (copy.sh layout). */
 const SNAPSHOT_TAG = 'hello-256m-8vga-05319-freebsd-ne2k-acpi'
 
@@ -20,9 +20,6 @@ const IDB_STORE = 'kv'
 
 /** How often to retry bind_interface while waiting for the mesh. */
 const POLL_INTERVAL_MS = 5000
-
-/** Hard-coded topic for this demo. */
-const BIND_TOPIC = 'v86'
 
 /** Fixed MAC for our virtual gateway (Ethernet framing). */
 const GATEWAY_MAC = new Uint8Array([0x52, 0x54, 0x00, 0x01, 0x02, 0x03])
@@ -455,18 +452,9 @@ async function initV86HelloDemo (opts) {
     if (activeIface) return true
 
     let host = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : ''
+    if (!host) host = await resolveVirtualListenHost()
     if (!host) {
-      // Fetch our z32 public key and bind to <z32>.v86
-      try {
-        const r = await fetch(whoisUrlSelf())
-        if (r.ok) {
-          const z32 = (await r.text()).trim().split(/\r?\n/)[0].trim()
-          if (z32) host = z32 + '.' + BIND_TOPIC
-        }
-      } catch (_) {}
-    }
-    if (!host) {
-      log('Bridge bind error: could not resolve local key for topic ' + BIND_TOPIC)
+      log('Bridge bind error: could not resolve virtual listen host from ' + pageHostname())
       return false
     }
     const iface = new BrowserNetInterface({ url: wsUrl })
@@ -474,6 +462,16 @@ async function initV86HelloDemo (opts) {
       const boundIp = await iface.bind(host)
       wireEthernetBridge(iface)
       activeIface = iface
+      iface.on('disconnect', function () {
+        log('Bridge lost — WebSocket closed')
+        if (emulator && bridgeNet0SendHandler) {
+          try { emulator.bus.unregister('net0-send', bridgeNet0SendHandler) } catch (_) {}
+          bridgeNet0SendHandler = null
+        }
+        activeIface = null
+        setBridgeState('connecting')
+        startPolling()
+      })
       log('Bridge connected — bound to ' + boundIp)
       // On snapshot restore: configure the guest NIC and restart sshd.
       // The setup overlay was already shown before polling started.
@@ -654,7 +652,13 @@ async function initV86HelloDemo (opts) {
 
   await startVm()
 
-  if (emulator) window.__v86 = emulator
+  if (emulator) {
+    var debug = window.__nospoonDebug
+    if (debug) {
+      debug.observe('#v86-log')
+      debug.on('keyboard', function (cmd) { emulator.keyboard_send_text(cmd.text) })
+    }
+  }
 
   // --- Setup overlay: block interaction until guest is ready ---
   var _setupOverlay = null

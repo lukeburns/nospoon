@@ -510,7 +510,7 @@ function TopicCard ({ topic, onLeave, reservationRows = [], dnsEnabled = false }
                   meshDnsWireName={p.meshDnsWireName}
                   dnsEnabled={dnsEnabled}
                 />{' '}
-                → <IpLink ip={p.ipv4} />
+                → <IpLink ip={p.ipv4} className={p.liveOnTopic === false ? 'reserved' : 'ok'} />
               </span>
             </div>
             <PeerRoutingBlock

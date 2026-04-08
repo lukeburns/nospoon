@@ -25,6 +25,7 @@ const inline = process.argv.includes('--inline')
 
 const assetsV86 = join(root, 'assets', 'v86')
 const distV86 = join(root, 'dist', 'v86')
+const debugScript = join(root, '../../web/debug/nospoon-debug.js')
 
 mkdirSync(join(root, 'dist'), { recursive: true })
 
@@ -109,6 +110,7 @@ if (inline) {
   )
   const outfile = join(root, 'dist/index.html')
   writeFileSync(outfile, html, 'utf8')
+  copyFileSync(debugScript, join(root, 'dist/nospoon-debug.js'))
   copyV86AssetsToDist()
   console.log('examples/v86: wrote (inline)', outfile)
 } else {
@@ -118,6 +120,7 @@ if (inline) {
   })
   copyFileSync(join(root, 'web/index.html'), join(root, 'dist/index.html'))
   copyFileSync(join(root, 'web/styles.css'), join(root, 'dist/styles.css'))
+  copyFileSync(debugScript, join(root, 'dist/nospoon-debug.js'))
   copyV86AssetsToDist()
-  console.log('examples/v86: wrote dist/index.html, dist/bundle.js, dist/styles.css')
+  console.log('examples/v86: wrote dist/index.html, dist/bundle.js, dist/styles.css, dist/nospoon-debug.js')
 }
