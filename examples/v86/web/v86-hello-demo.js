@@ -493,9 +493,17 @@ async function initV86HelloDemo (opts) {
             emulator.keyboard_send_scancodes([
               0xBA, 0x9D, 0xAA, 0xB6, 0xB8
             ])
-            emulator.keyboard_send_text('ifconfig ed0 inet ' + boundIp + '/24\n')
+            // Use a virtual nameserver IP that's different from the guest's
+            // own address so the kernel routes it through NE2000.  The bridge
+            // intercepts all UDP port 53 packets regardless of dest IP.
+            var parts = boundIp.split('.')
+            var nsIp = parts[0] + '.' + parts[1] + '.' + parts[2] + '.254'
+            emulator.keyboard_send_text(
+              'ifconfig ed0 inet ' + boundIp + '/24 && ' +
+              'echo "nameserver ' + nsIp + '" > /etc/resolv.conf\n'
+            )
             _retries++
-            log('Sent ifconfig (attempt ' + _retries + ')')
+            log('Sent ifconfig + resolv.conf (attempt ' + _retries + ')')
           }
 
           // Retry ifconfig every 2s until the guest proves the NIC is up.
