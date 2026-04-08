@@ -167,6 +167,45 @@ button:hover {
   margin: 0;
 }
 
+.v86-setup-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  color: #ddd;
+  font-size: 1.1rem;
+  font-family: system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  z-index: 10;
+  pointer-events: all;
+  cursor: wait;
+  animation: overlay-fade-in 0.15s ease-out;
+  transition: opacity 0.2s ease-out;
+}
+
+.v86-setup-overlay::after {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-left: 0.6rem;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: #ddd;
+  border-radius: 50%;
+  animation: setup-spin 0.8s linear infinite;
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes setup-spin {
+  to { transform: rotate(360deg); }
+}
+
 pre.v86-log {
   margin-top: 0.35rem;
   padding: 0.75rem 1rem;

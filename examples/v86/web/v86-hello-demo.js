@@ -475,16 +475,88 @@ async function initV86HelloDemo (opts) {
       wireEthernetBridge(iface)
       activeIface = iface
       log('Bridge connected — bound to ' + boundIp)
-      // Configure the guest's NIC and restart sshd in daemon mode after
-      // snapshot restore (debug -ddd mode's rexec fails with ENOTCONN in the
-      // emulated environment because getpeername races with slow accept).
-      setTimeout(function () {
-        emulator.keyboard_send_text('ifconfig ed0 inet ' + boundIp + '/24\n')
-      }, 1000)
-      setTimeout(function () {
-        emulator.keyboard_send_text('killall sshd 2>/dev/null; /usr/sbin/sshd\n')
-        log('Sent sshd restart (daemon mode)')
-      }, 2500)
+      // On snapshot restore: configure the guest NIC and restart sshd.
+      // The setup overlay was already shown before polling started.
+      if (emulator._nospoonRestoredFromSnapshot) {
+        updateSetupOverlay('Waiting for emulator…')
+
+        function beginGuestSetup () {
+          updateSetupOverlay('Configuring network…')
+
+          var _bus = emulator.bus
+          var _origHandler = bridgeNet0SendHandler
+          var _setupDone = false
+          var _retryTimer = null
+          var _retries = 0
+
+          function sendIfconfig () {
+            emulator.keyboard_send_scancodes([
+              0xBA, 0x9D, 0xAA, 0xB6, 0xB8
+            ])
+            emulator.keyboard_send_text('ifconfig ed0 inet ' + boundIp + '/24\n')
+            _retries++
+            log('Sent ifconfig (attempt ' + _retries + ')')
+          }
+
+          // Retry ifconfig every 2s until the guest proves the NIC is up.
+          // ifconfig is idempotent so re-sends are harmless.
+          sendIfconfig()
+          _retryTimer = setInterval(function () {
+            if (_setupDone || _retries >= 5) {
+              clearInterval(_retryTimer)
+              if (!_setupDone) finishSetup('max retries — assuming ready')
+              return
+            }
+            sendIfconfig()
+          }, 2000)
+
+          bridgeNet0SendHandler = function (ethFrame) {
+            if (_origHandler) _origHandler(ethFrame)
+            if (_setupDone) return
+            var u8 = new Uint8Array(ethFrame)
+            if (u8.length < 42) return
+            var et = (u8[12] << 8) | u8[13]
+            if (et !== 0x0806) return
+            finishSetup('network up')
+          }
+          _bus.unregister('net0-send', _origHandler)
+          _bus.register('net0-send', bridgeNet0SendHandler)
+
+          function finishSetup (reason) {
+            if (_setupDone) return
+            _setupDone = true
+            clearInterval(_retryTimer)
+            updateSetupOverlay('Starting services…')
+            emulator.keyboard_send_text('killall sshd 2>/dev/null; /usr/sbin/sshd\n')
+            log('Guest ready (' + reason + ') — sshd restarted')
+            setTimeout(function () {
+              // Ctrl+L clears the terminal — send it behind the overlay,
+              // then wait for the guest to process and repaint before revealing.
+              emulator.keyboard_send_scancodes([0x1D, 0x26, 0xA6, 0x9D])
+              var _cleared = false
+              function checkScreen () {
+                if (_cleared) return
+                _cleared = true
+                dismissSetupOverlay()
+                window.removeEventListener('keydown', blockKeyboardForSetup, true)
+                window.removeEventListener('keyup', blockKeyboardForSetup, true)
+                window.removeEventListener('keypress', blockKeyboardForSetup, true)
+              }
+              emulator.bus.register('screen-put-char', function onChar () {
+                emulator.bus.unregister('screen-put-char', onChar)
+                checkScreen()
+              })
+              setTimeout(checkScreen, 1000)
+            }, 500)
+          }
+        }
+
+        // keyboard_adapter exists from the V86 constructor, before the
+        // snapshot is actually restored — always wait for emulator-ready.
+        emulator.add_listener('emulator-ready', function () {
+          beginGuestSetup()
+        })
+      }
       return true
     } catch (e) {
       try { iface.close() } catch (_) {}
@@ -537,21 +609,38 @@ async function initV86HelloDemo (opts) {
     tick()
   }
 
+  const SHIPPED_SNAPSHOT_URL = new URL('guest/snapshot.bin.zst', v86Base).href
+
+  async function shippedSnapshotExists () {
+    try {
+      const r = await fetch(SHIPPED_SNAPSHOT_URL, { method: 'HEAD' })
+      return r.ok
+    } catch (_) {
+      return false
+    }
+  }
+
   // --- Auto-start VM on page load ---
   async function startVm () {
     if (emulator) return
     try {
       let snap = await idbGetSnapshotBuffer()
-      if (!snap) {
-        if (!(await freebsdGuestReady())) return
-        log('No snapshot — cold-booting FreeBSD from disk (slow). After login, run dhclient on the ethernet interface; sshd on 22 when ready.')
-      } else {
-        if (!(await freebsdGuestReady())) return
+      let shippedSnap = false
+      if (!snap && await shippedSnapshotExists()) {
+        shippedSnap = true
+        log('Loading shipped snapshot…')
       }
-      emulator = new V86(v86BaseConfig(snap))
-      if (snap) {
-        log('Restored VM from snapshot.')
+      if (!snap && !shippedSnap) {
+        if (!(await freebsdGuestReady())) return
+        log('No snapshot — cold-booting FreeBSD from disk (slow). Log in as root (no password), then paste the bootscript (examples/v86/guest-bootscript.sh) and save a snapshot.')
       }
+      const cfg = v86BaseConfig(snap)
+      if (!snap && shippedSnap) {
+        cfg.initial_state = { url: SHIPPED_SNAPSHOT_URL }
+      }
+      emulator = new V86(cfg)
+      emulator._nospoonRestoredFromSnapshot = !!(snap || shippedSnap)
+      log(snap ? 'Restored VM from snapshot.' : shippedSnap ? 'Restored VM from shipped snapshot.' : 'Cold-booting…')
     } catch (e) {
       log('VM error: ' + (e && e.message ? e.message : e))
       emulator = null
@@ -561,6 +650,56 @@ async function initV86HelloDemo (opts) {
   await startVm()
 
   if (emulator) window.__v86 = emulator
+
+  // --- Setup overlay: block interaction until guest is ready ---
+  var _setupOverlay = null
+  var _setupReady = false
+
+  function showSetupOverlay (text) {
+    if (_setupReady) return
+    if (!_setupOverlay && screenEl) {
+      // Wrap screenEl in a positioning parent so the overlay doesn't
+      // pollute v86's internal DOM (it iterates its own children).
+      var wrapper = screenEl.parentNode
+      if (!wrapper._v86OverlayHost) {
+        var host = document.createElement('div')
+        host.style.position = 'relative'
+        wrapper.insertBefore(host, screenEl)
+        host.appendChild(screenEl)
+        wrapper._v86OverlayHost = host
+      }
+      _setupOverlay = document.createElement('div')
+      _setupOverlay.className = 'v86-setup-overlay'
+      wrapper._v86OverlayHost.appendChild(_setupOverlay)
+    }
+    if (_setupOverlay) _setupOverlay.textContent = text || 'Setting up…'
+  }
+
+  function updateSetupOverlay (text) {
+    if (_setupOverlay) _setupOverlay.textContent = text
+  }
+
+  function dismissSetupOverlay () {
+    _setupReady = true
+    if (_setupOverlay && _setupOverlay.parentNode) {
+      _setupOverlay.parentNode.removeChild(_setupOverlay)
+    }
+    _setupOverlay = null
+  }
+
+  function blockKeyboardForSetup (e) {
+    if (!_setupReady && emulator && emulator._nospoonRestoredFromSnapshot) {
+      e.stopImmediatePropagation()
+      e.preventDefault()
+    }
+  }
+
+  if (emulator && emulator._nospoonRestoredFromSnapshot) {
+    showSetupOverlay('Connecting to mesh…')
+    window.addEventListener('keydown', blockKeyboardForSetup, true)
+    window.addEventListener('keyup', blockKeyboardForSetup, true)
+    window.addEventListener('keypress', blockKeyboardForSetup, true)
+  }
 
   // --- Clipboard: intercept before v86's global keyboard handler ---
   if (emulator) {
@@ -600,7 +739,12 @@ async function initV86HelloDemo (opts) {
   }
 
   if (saveSnapBtn) {
-    saveSnapBtn.onclick = async function () {
+    var _lastSaveClick = 0
+    saveSnapBtn.onclick = async function (e) {
+      var now = Date.now()
+      // Double-click Save (within 400ms) to also download as file
+      window._v86ExportSnap = (now - _lastSaveClick) < 400
+      _lastSaveClick = now
       if (!emulator) {
         log('VM not running.')
         return
@@ -619,8 +763,18 @@ async function initV86HelloDemo (opts) {
         log(
           'Saved snapshot to IndexedDB (~' +
             Math.round(copy.byteLength / (1024 * 1024)) +
-            ' MiB).'
+            ' MiB). Double-click Save to also download as file.'
         )
+        if (window._v86ExportSnap) {
+          const blob = new Blob([copy], { type: 'application/octet-stream' })
+          const a = document.createElement('a')
+          a.href = URL.createObjectURL(blob)
+          a.download = 'snapshot.bin'
+          a.click()
+          URL.revokeObjectURL(a.href)
+          log('Exported snapshot.bin (' + Math.round(copy.byteLength / (1024 * 1024)) + ' MiB)')
+          window._v86ExportSnap = false
+        }
         await refreshSnapshotStatus()
       } catch (e) {
         const msg = e && e.name === 'QuotaExceededError' ? 'storage quota exceeded' : e && e.message ? e.message : e
