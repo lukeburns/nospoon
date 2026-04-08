@@ -7,6 +7,7 @@
  */
 
 const { BrowserNetInterface, defaultBrowserNetWsUrl } = require('browser-net-shim')
+const { resolveVirtualListenHost, getTopicOverride } = require('./env')
 
 /** Bump if snapshot format or guest config changes and old blobs must be ignored. */
 const SNAPSHOT_SCHEMA = 4
@@ -217,11 +218,13 @@ async function initV86HelloDemo (opts) {
   let activeIface = null
   let pollTimer = null
 
-  const wsUrl = defaultBrowserNetWsUrl(
+  var wsUrl = defaultBrowserNetWsUrl(
     typeof window !== 'undefined' && window.location
       ? window.location.href
       : 'http://127.0.0.1/'
   )
+  var _topicHint = getTopicOverride()
+  if (_topicHint) wsUrl += (wsUrl.includes('?') ? '&' : '?') + 'topic=' + encodeURIComponent(_topicHint)
 
   function v86BaseConfig (initialStateBuf) {
     const c = {
@@ -315,8 +318,10 @@ async function initV86HelloDemo (opts) {
    * v86's {@code relay_url: "fetch"} adapter registers {@code net0-send} and runs {@code Hb()} on
    * every guest frame. For TCP flows it did not originate (e.g. inbound SYN to {@code nc -l}),
    * {@code Hb} injects RST into the guest — so you see RX logs but never TX / no SYN-ACK on the mesh.
-   * Raw mesh traffic must not go through that path; drop only the adapter's listener.
-   * @param {{ network_adapter?: object, bus?: { listeners?: Record<string, Array<{ this_value?: object }>> }, _nospoonStrippedV86FetchNet0Send?: boolean }} em
+   * Raw mesh traffic must not go through that path; strip the adapter's listener so the bridge
+   * handler is the sole consumer. The fetch adapter is still needed for NE2000 device init and
+   * provides DHCP/ARP before the bridge is wired.
+   * @param {{ network_adapter?: object, bus?: { listeners?: Record<string, Array<{ this_value?: object, fn?: Function }>> }, _nospoonStrippedV86FetchNet0Send?: boolean }} em
    */
   function stripBuiltinFetchNet0Send (em) {
     if (!em || em._nospoonStrippedV86FetchNet0Send) return
@@ -325,16 +330,29 @@ async function initV86HelloDemo (opts) {
     if (!na || !listeners) return
     const key = 'net0-send'
     const arr = listeners[key]
-    if (!Array.isArray(arr)) return
-    const kept = arr.filter(function (ent) {
+    if (!Array.isArray(arr) || arr.length === 0) return
+    var kept = arr.filter(function (ent) {
       return ent.this_value !== na
     })
-    if (kept.length === arr.length) return
+    if (kept.length < arr.length) {
+      listeners[key] = kept
+      em._nospoonStrippedV86FetchNet0Send = true
+      log('Stripped ' + (arr.length - kept.length) + ' fetch-adapter net0-send handler(s) via this_value match')
+      return
+    }
+    // Fallback: this_value match failed (minified build / .bind). Identify the
+    // fetch adapter's handler by exclusion — remove every handler that is NOT
+    // our bridge handler (which hasn't been registered yet at this point).
+    if (bridgeNet0SendHandler) {
+      kept = arr.filter(function (ent) {
+        return ent.fn === bridgeNet0SendHandler
+      })
+    } else {
+      kept = []
+    }
     listeners[key] = kept
     em._nospoonStrippedV86FetchNet0Send = true
-    log(
-      'Detached v86 built-in net0-send (fetch NAT) so raw mesh TCP is not RST’d — guest handles real IP/TCP.'
-    )
+    log('Stripped ' + (arr.length - kept.length) + ' net0-send handler(s) via fallback (this_value match missed)')
   }
 
   /**
@@ -412,7 +430,7 @@ async function initV86HelloDemo (opts) {
         reply.set(GATEWAY_MAC, 22)            // sender MAC
         reply.set(u8.subarray(38, 42), 28)    // sender IP = requested target IP
         reply.set(u8.subarray(22, 28), 32)    // target = original sender
-        bus.send('net0-receive', reply)
+        bridgeInject(reply)
         return
       }
 
@@ -430,18 +448,36 @@ async function initV86HelloDemo (opts) {
     }
     bus.register('net0-send', bridgeNet0SendHandler)
 
+    // The fetch adapter mirrors the guest's IP headers (src=10.0.2.254) so we
+    // cannot filter by source IP.  Instead, gate net0-receive: only frames
+    // injected by our bridge (with the flag set) are allowed through.
+    var _bridgeInjecting = false
+    var _origBusSend = bus.send
+    var _busCtx = bus
+    bus.send = function (event, data) {
+      if (event === 'net0-receive' && !_bridgeInjecting) {
+        log('BLOCKED non-bridge net0-receive len=' + (data && data.length))
+        return
+      }
+      return _origBusSend.apply(_busCtx, arguments)
+    }
+    function bridgeInject (frame) {
+      _bridgeInjecting = true
+      try { bus.send('net0-receive', frame) } finally { _bridgeInjecting = false }
+    }
+    log('Installed net0-receive gate (only bridge frames pass)')
+
     iface.on('packet', function (ev) {
       const ipPkt = ev.data
       if (!ipPkt || ipPkt.length < 20) return
       log('RX ' + fmtPkt(ipPkt))
-      // Wrap in Ethernet: dst=guest (broadcast until learned), src=gateway, type=IPv4
       const frame = new Uint8Array(14 + ipPkt.length)
       frame.set(guestMac || BROADCAST_MAC, 0)
       frame.set(GATEWAY_MAC, 6)
       frame[12] = 0x08; frame[13] = 0x00
       frame.set(ipPkt, 14)
       log('NET0-INJECT len=' + frame.length + ' dstMAC=' + fmtMac(frame, 0) + ' srcMAC=' + fmtMac(frame, 6))
-      bus.send('net0-receive', frame)
+      bridgeInject(frame)
     })
   }
 
@@ -450,7 +486,11 @@ async function initV86HelloDemo (opts) {
     if (!emulator) return false
     if (activeIface) return true
 
-    const explicitHost = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : undefined
+    const uiHost = bindHostEl && bindHostEl.value.trim() ? bindHostEl.value.trim() : undefined
+    let explicitHost = uiHost
+    if (!explicitHost) {
+      try { explicitHost = await resolveVirtualListenHost() } catch (_) {}
+    }
     const iface = new BrowserNetInterface({ url: wsUrl })
     try {
       const boundIp = await iface.bind(explicitHost)

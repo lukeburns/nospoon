@@ -694,6 +694,9 @@ function createBrowserNetMiddleware (opts) {
                         : buildDnsNodata(dnsPayload)
                       console.error('[dns] PTR ' + ip + ' → ' + (hostname || 'NODATA' + (onSubnet ? '' : ' (off-subnet)')))
                     }
+                  } else if (qtype !== 1 && qtype !== 12) {
+                    dnsResp = buildDnsNodata(dnsPayload)
+                    console.error('[dns] qtype=' + qtype + ' ' + qr.name + ' → NODATA (unsupported type)')
                   }
                   if (dnsResp) {
                     console.error('[dns] resp id=0x' + dnsResp.readUInt16BE(0).toString(16) +

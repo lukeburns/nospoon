@@ -15,13 +15,27 @@ const MIDDLE_WS_PORT = 8766
 /** Base URL for whois (no trailing slash), e.g. {@code http://whois}. Override: {@code ?whoisOrigin=}. */
 let whoisBase = 'http://whois'
 
+/** Topic override from {@code ?topic=} query param — used for localhost dev testing. */
+let topicOverride = ''
+
+function _isLoopback (h) {
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1'
+}
+
 function applyBrowserNetProxyFromLocation () {
   if (typeof window === 'undefined' || !window.location) return
   const u = new URL(window.location.href)
+
+  const topicParam = u.searchParams.get('topic')
+  if (topicParam && topicParam.trim()) {
+    topicOverride = topicParam.trim()
+  }
+
   const whoisParam = u.searchParams.get('whoisOrigin')
   if (whoisParam && whoisParam.trim()) {
     whoisBase = whoisParam.trim().replace(/\/$/, '')
   }
+
   const host =
     u.searchParams.get('proxyHost') ||
     u.searchParams.get('controlHost') ||
@@ -107,14 +121,16 @@ function pageHostname () {
 }
 
 /**
- * Mesh-style virtual bind host: {@code z32.cid} when the page host is a single label (CID or key),
- * otherwise the full {@code hostname} (already {@code key.topic}).
+ * Mesh-style virtual bind host: {@code z32.topic} where topic comes from
+ * {@code ?topic=} param, page hostname (CID or key), or the full hostname
+ * if it already contains a dot (i.e. already {@code key.topic}).
  * @returns {Promise<string | null>}
  */
 async function resolveVirtualListenHost () {
-  const host = pageHostname()
+  const topic = topicOverride
+  const host = topic || pageHostname()
   if (!host) return null
-  if (host.includes('.')) return host
+  if (!topic && host.includes('.')) return host
   try {
     const r = await fetch(whoisUrlSelf())
     if (!r.ok) return null
@@ -145,6 +161,10 @@ async function resolvePeerLabelFromWhois (ip, port) {
   }
 }
 
+function getTopicOverride () {
+  return topicOverride
+}
+
 module.exports = {
   applyBrowserNetProxyFromLocation,
   resolveControlPanelOrigin,
@@ -153,5 +173,6 @@ module.exports = {
   pageHostname,
   resolveVirtualListenHost,
   resolvePeerLabelFromWhois,
+  getTopicOverride,
   MIDDLE_WS_PORT
 }
