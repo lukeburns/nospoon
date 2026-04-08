@@ -41,13 +41,15 @@ killall sshd 2>/dev/null || true
 sleep 1
 /usr/sbin/sshd
 
-# --- DNS resolver (bridge intercepts UDP:53 in-process) ---
-# Subnet broadcast — never allocated to a peer, kernel won't loopback.
-echo "nameserver 10.0.2.255" > /etc/resolv.conf
+# --- DNS resolver ---
+# The bridge intercepts UDP:53 in-process.  resolv.conf is written at
+# snapshot-restore time by the JS setup code (which knows the actual
+# bound subnet).  On a cold boot the NIC isn't configured yet so there
+# is nothing useful to put here — the snapshot will carry the right value.
 
 echo ""
 echo "=== v86 mesh guest ready ==="
 echo "  sshd listening on port 22 (open root, no password)"
-echo "  DNS: nameserver 10.0.2.255 (bridge-scoped)"
+echo "  DNS: configured at snapshot-restore (bridge-scoped .254)"
 echo "  save a browser snapshot so this persists across reloads"
 echo ""

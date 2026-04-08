@@ -26,8 +26,10 @@ const IP_PROTO_UDP = 17
 const DNS_PORT = 53
 
 // ---------------------------------------------------------------------------
-// Minimal DNS wire-format helpers (A-record queries only)
+// Minimal DNS wire-format helpers (A + PTR)
 // ---------------------------------------------------------------------------
+
+const IN_ADDR_ARPA_RE = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\.in-addr\.arpa$/i
 
 /**
  * Parse the QNAME from a DNS query payload starting at offset 12.
@@ -39,7 +41,7 @@ function parseDnsQname (buf, off) {
   while (i < buf.length) {
     const len = buf[i]
     if (len === 0) { i++; break }
-    if ((len & 0xc0) !== 0) return null // compressed — not expected in queries from stub resolvers
+    if ((len & 0xc0) !== 0) return null
     i++
     if (i + len > buf.length) return null
     labels.push(buf.subarray(i, i + len).toString('ascii'))
@@ -48,46 +50,82 @@ function parseDnsQname (buf, off) {
   return labels.length ? { name: labels.join('.'), endOffset: i } : null
 }
 
+/** Encode a dotted hostname as DNS wire-format labels. */
+function encodeDnsName (name) {
+  const labels = name.split('.')
+  const parts = []
+  for (const l of labels) {
+    parts.push(Buffer.from([l.length]))
+    parts.push(Buffer.from(l, 'ascii'))
+  }
+  parts.push(Buffer.from([0]))
+  return Buffer.concat(parts)
+}
+
 /**
- * Build a minimal DNS A-record response.
- * @param {Buffer} queryPkt  — full DNS query payload (header + question)
- * @param {string} name      — QNAME (dotted, for logging only)
- * @param {string|null} ipv4 — resolved IPv4 or null for NODATA (empty answer)
- * @returns {Buffer}
+ * Extract question section + header fields shared by all response builders.
+ * @returns {{ id: number, questionSection: Buffer } | null}
  */
-function buildDnsResponse (queryPkt, name, ipv4) {
+function parseDnsQueryParts (queryPkt) {
   const id = queryPkt.readUInt16BE(0)
   const qnameEnd = parseDnsQname(queryPkt, 12)
   if (!qnameEnd) return null
-  const questionEnd = qnameEnd.endOffset + 4 // QTYPE(2) + QCLASS(2)
-  const questionSection = queryPkt.subarray(12, questionEnd)
+  const questionEnd = qnameEnd.endOffset + 4
+  return { id, questionSection: queryPkt.subarray(12, questionEnd) }
+}
 
-  if (!ipv4) {
-    // NODATA — name may exist but no A record yet (avoids negative caching)
-    const resp = Buffer.alloc(12 + questionSection.length)
-    resp.writeUInt16BE(id, 0)
-    resp.writeUInt16BE(0x8180, 2) // QR=1, RD=1, RA=1, RCODE=0 (NOERROR)
-    resp.writeUInt16BE(1, 4)      // QDCOUNT
-    questionSection.copy(resp, 12)
-    return resp
-  }
+/** NODATA response — name exists but no record of this type yet. */
+function buildDnsNodata (queryPkt) {
+  const p = parseDnsQueryParts(queryPkt)
+  if (!p) return null
+  const resp = Buffer.alloc(12 + p.questionSection.length)
+  resp.writeUInt16BE(p.id, 0)
+  resp.writeUInt16BE(0x8180, 2)
+  resp.writeUInt16BE(1, 4)
+  p.questionSection.copy(resp, 12)
+  return resp
+}
 
+/** A-record response. */
+function buildDnsAResponse (queryPkt, ipv4) {
+  const p = parseDnsQueryParts(queryPkt)
+  if (!p) return null
   const parts = ipv4.split('.').map(Number)
-  // Header(12) + question + answer(16: ptr(2)+type(2)+class(2)+ttl(4)+rdlen(2)+rdata(4))
-  const resp = Buffer.alloc(12 + questionSection.length + 16)
-  resp.writeUInt16BE(id, 0)
-  resp.writeUInt16BE(0x8180, 2) // QR=1, RD=1, RA=1, RCODE=0
-  resp.writeUInt16BE(1, 4)      // QDCOUNT
-  resp.writeUInt16BE(1, 6)      // ANCOUNT
-  questionSection.copy(resp, 12)
-  let off = 12 + questionSection.length
-  resp.writeUInt16BE(0xc00c, off); off += 2       // NAME pointer to QNAME
-  resp.writeUInt16BE(1, off); off += 2             // TYPE A
-  resp.writeUInt16BE(1, off); off += 2             // CLASS IN
-  resp.writeUInt32BE(60, off); off += 4            // TTL 60s
-  resp.writeUInt16BE(4, off); off += 2             // RDLENGTH
+  const resp = Buffer.alloc(12 + p.questionSection.length + 16)
+  resp.writeUInt16BE(p.id, 0)
+  resp.writeUInt16BE(0x8180, 2)
+  resp.writeUInt16BE(1, 4)
+  resp.writeUInt16BE(1, 6)
+  p.questionSection.copy(resp, 12)
+  let off = 12 + p.questionSection.length
+  resp.writeUInt16BE(0xc00c, off); off += 2
+  resp.writeUInt16BE(1, off); off += 2        // TYPE A
+  resp.writeUInt16BE(1, off); off += 2        // CLASS IN
+  resp.writeUInt32BE(60, off); off += 4       // TTL
+  resp.writeUInt16BE(4, off); off += 2
   resp[off++] = parts[0]; resp[off++] = parts[1]
   resp[off++] = parts[2]; resp[off++] = parts[3]
+  return resp
+}
+
+/** PTR-record response. */
+function buildDnsPtrResponse (queryPkt, hostname) {
+  const p = parseDnsQueryParts(queryPkt)
+  if (!p) return null
+  const rdata = encodeDnsName(hostname)
+  const resp = Buffer.alloc(12 + p.questionSection.length + 12 + rdata.length)
+  resp.writeUInt16BE(p.id, 0)
+  resp.writeUInt16BE(0x8180, 2)
+  resp.writeUInt16BE(1, 4)
+  resp.writeUInt16BE(1, 6)
+  p.questionSection.copy(resp, 12)
+  let off = 12 + p.questionSection.length
+  resp.writeUInt16BE(0xc00c, off); off += 2
+  resp.writeUInt16BE(12, off); off += 2       // TYPE PTR
+  resp.writeUInt16BE(1, off); off += 2        // CLASS IN
+  resp.writeUInt32BE(60, off); off += 4       // TTL
+  resp.writeUInt16BE(rdata.length, off); off += 2
+  rdata.copy(resp, off)
   return resp
 }
 
@@ -120,11 +158,20 @@ function buildUdpIpv4 (srcIp, dstIp, srcPort, dstPort, payload) {
   buf.writeUInt16BE((~cksum) & 0xffff, 10)
   // UDP header
   const udpOff = 20
+  const udpLen = 8 + payload.length
   buf.writeUInt16BE(srcPort, udpOff)
   buf.writeUInt16BE(dstPort, udpOff + 2)
-  buf.writeUInt16BE(8 + payload.length, udpOff + 4)
-  // UDP checksum = 0 (optional in IPv4)
+  buf.writeUInt16BE(udpLen, udpOff + 4)
   payload.copy(buf, udpOff + 8)
+  // UDP checksum over pseudo-header + UDP segment
+  let usum = 0
+  for (let j = 12; j < 20; j += 2) usum += buf.readUInt16BE(j) // src + dst IP
+  usum += IP_PROTO_UDP + udpLen
+  for (let j = udpOff; j < ipLen - 1; j += 2) usum += buf.readUInt16BE(j)
+  if (ipLen & 1) usum += buf[ipLen - 1] << 8
+  while (usum > 0xffff) usum = (usum & 0xffff) + (usum >> 16)
+  const ucks = (~usum) & 0xffff
+  buf.writeUInt16BE(ucks === 0 ? 0xffff : ucks, udpOff + 6)
   return buf
 }
 
@@ -151,7 +198,8 @@ function buildUdpIpv4 (srcIp, dstIp, srcPort, dstPort, payload) {
  * @property {function(string, import('ws')|undefined): string | null | undefined} [resolveConnectHost] — non-IPv4 `connect` host
  * @property {function(string, import('ws')|undefined): OutboundRoute | null | undefined} [getOutboundRoute] — required for `connect` op
  * @property {function(import('ws'), import('http').IncomingMessage): (void|Promise<void>)} [prepareWebSocket] — runs before JSON/binary handlers (e.g. Origin policy + topic join)
- * @property {function(string, import('ws')): string | null} [resolveDns] — resolve hostname → IPv4 for bridge-scoped DNS; return null for NXDOMAIN
+ * @property {function(string, import('ws')): string | null} [resolveDns] — resolve hostname → IPv4 for bridge-scoped DNS; return null for NODATA
+ * @property {function(string, import('ws')): string | null} [reverseDns] — IPv4 → hostname for PTR; return null for NODATA
  * @property {string} [webSocketPath]
  * @property {{ defaultListenNotReady?: string, unknownListenHost?: string }} [messages]
  */
@@ -179,6 +227,8 @@ function createBrowserNetMiddleware (opts) {
     typeof opts.getOutboundRoute === 'function' ? opts.getOutboundRoute : null
   const resolveDns =
     typeof opts.resolveDns === 'function' ? opts.resolveDns : null
+  const reverseDns =
+    typeof opts.reverseDns === 'function' ? opts.reverseDns : null
   const shouldAcceptInboundPacket =
     typeof opts.shouldAcceptInboundPacket === 'function'
       ? opts.shouldAcceptInboundPacket
@@ -612,7 +662,7 @@ function createBrowserNetMiddleware (opts) {
 
           // Intercept DNS queries (UDP dst port 53) and resolve in-process.
           const proto = pkt[9]
-          if (resolveDns && proto === IP_PROTO_UDP && pkt.length >= 28) {
+          if ((resolveDns || reverseDns) && proto === IP_PROTO_UDP && pkt.length >= 28) {
             const ihl = (pkt[0] & 0x0f) * 4
             const udpDstPort = pkt.readUInt16BE(ihl + 2)
             if (udpDstPort === DNS_PORT) {
@@ -624,16 +674,38 @@ function createBrowserNetMiddleware (opts) {
                   const qtype = qr.endOffset + 1 < dnsPayload.length
                     ? dnsPayload.readUInt16BE(qr.endOffset)
                     : 0
-                  if (qtype === 1) { // A record
+                  let dnsResp = null
+                  const guestSubnet = srcIp.substring(0, srcIp.lastIndexOf('.'))
+                  if (qtype === 1 && resolveDns) {
                     const resolvedIp = resolveDns(qr.name, ws)
-                    const dnsResp = buildDnsResponse(dnsPayload, qr.name, resolvedIp)
-                    if (dnsResp) {
-                      const ipResp = buildUdpIpv4(dstIp, srcIp, DNS_PORT, udpSrcPort, dnsResp)
-                      const hdr = Buffer.allocUnsafe(1)
-                      hdr[0] = RAW_IP_TAG
-                      try { ws.send(Buffer.concat([hdr, ipResp])) } catch (_) {}
-                      console.error('[dns] ' + qr.name + ' → ' + (resolvedIp || 'NXDOMAIN'))
+                    const sameNet = resolvedIp && resolvedIp.substring(0, resolvedIp.lastIndexOf('.')) === guestSubnet
+                    dnsResp = (resolvedIp && sameNet)
+                      ? buildDnsAResponse(dnsPayload, resolvedIp)
+                      : buildDnsNodata(dnsPayload)
+                    console.error('[dns] A ' + qr.name + ' → ' + (resolvedIp && sameNet ? resolvedIp : 'NODATA' + (resolvedIp ? ' (off-subnet ' + resolvedIp + ')' : '')))
+                  } else if (qtype === 12 && reverseDns) {
+                    const m = IN_ADDR_ARPA_RE.exec(qr.name)
+                    if (m) {
+                      const ip = m[4] + '.' + m[3] + '.' + m[2] + '.' + m[1]
+                      const onSubnet = ip.substring(0, ip.lastIndexOf('.')) === guestSubnet
+                      const hostname = onSubnet ? reverseDns(ip, ws) : null
+                      dnsResp = hostname
+                        ? buildDnsPtrResponse(dnsPayload, hostname)
+                        : buildDnsNodata(dnsPayload)
+                      console.error('[dns] PTR ' + ip + ' → ' + (hostname || 'NODATA' + (onSubnet ? '' : ' (off-subnet)')))
                     }
+                  }
+                  if (dnsResp) {
+                    console.error('[dns] resp id=0x' + dnsResp.readUInt16BE(0).toString(16) +
+                      ' flags=0x' + dnsResp.readUInt16BE(2).toString(16) +
+                      ' QD=' + dnsResp.readUInt16BE(4) +
+                      ' AN=' + dnsResp.readUInt16BE(6) +
+                      ' len=' + dnsResp.length)
+                    const ipResp = buildUdpIpv4(dstIp, srcIp, DNS_PORT, udpSrcPort, dnsResp)
+                    console.error('[dns] UDP src=' + dstIp + ':' + DNS_PORT + ' dst=' + srcIp + ':' + udpSrcPort + ' ipLen=' + ipResp.length)
+                    const hdr = Buffer.allocUnsafe(1)
+                    hdr[0] = RAW_IP_TAG
+                    try { ws.send(Buffer.concat([hdr, ipResp])) } catch (_) {}
                     return
                   }
                 }
