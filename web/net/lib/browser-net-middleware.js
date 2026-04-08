@@ -9,7 +9,7 @@
  */
 
 const crypto = require('crypto')
-const { WebSocketServer } = require('ws')
+const { WebSocketServer, WebSocket: WsSocket } = require('ws')
 const {
   parseIpv4Tcp,
   buildIpv4TcpPacket,
@@ -1075,10 +1075,17 @@ function createBrowserNetMiddleware (opts) {
         function wire () {
           ws.removeListener('message', stash)
           const onMessage = attachWebSocketConnection(ws, req)
-          for (const row of pending) {
-            onMessage(row[0], row[1])
+          // prepareWebSocket can outlive the TCP connection: the peer may have
+          // closed before `wire()`. If we are not OPEN, do not replay stashed
+          // ops (they would register bind_interface/listen on a dead session).
+          // If we are still OPEN here, normal `close` still runs cleanupWs later.
+          if (ws.readyState === WsSocket.OPEN) {
+            for (const row of pending) {
+              onMessage(row[0], row[1])
+            }
           }
           pending.length = 0
+          if (ws.readyState !== WsSocket.OPEN) cleanupWs(ws)
         }
         if (prepareWebSocket) {
           Promise.resolve(prepareWebSocket(ws, req))

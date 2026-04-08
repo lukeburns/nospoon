@@ -367,6 +367,83 @@ describe('browser-net-middleware (integration)', function () {
     }
   })
 
+  it('cleans interface bind when client disconnects before async prepareWebSocket completes', async function () {
+    /** @type {(() => void) | null} */
+    let releasePrepare = null
+    const prepareGate = new Promise(function (resolve) {
+      releasePrepare = function () {
+        resolve()
+      }
+    })
+    const mw = createBrowserNetMiddleware({
+      frameIpv4ForPeerStream: function (b) {
+        return b
+      },
+      getDefaultListenIpv4: function () {
+        return LOCAL_IP
+      },
+      prepareWebSocket: async function () {
+        await prepareGate
+      }
+    })
+
+    const server = http.createServer()
+    mw.attachToHttpServer(server)
+
+    await new Promise(function (resolve, reject) {
+      server.listen(0, '127.0.0.1', function (err) {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+    const addr = server.address()
+    assert.ok(addr && typeof addr === 'object')
+    const port = /** @type {import('net').AddressInfo} */ (addr).port
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/browser-net`)
+
+    try {
+      await new Promise(function (resolve, reject) {
+        ws.once('error', reject)
+        ws.once('open', function () {
+          ws.send(
+            JSON.stringify({
+              op: 'bind_interface',
+              rid: 1,
+              host: LOCAL_IP
+            })
+          )
+          ws.close()
+          resolve()
+        })
+      })
+      assert.ok(releasePrepare)
+      await new Promise(function (resolve, reject) {
+        ws.once('error', reject)
+        ws.once('close', resolve)
+      })
+      // Let the server-side WebSocket leave OPEN (close is asynchronous on the wire).
+      await new Promise(function (r) {
+        setTimeout(r, 50)
+      })
+      releasePrepare()
+      await new Promise(function (r) {
+        setImmediate(r)
+      })
+      const st = mw.getStatus()
+      assert.equal(st.interfaces.length, 0, 'stale bind_interface must not occupy interface map')
+    } finally {
+      try {
+        ws.close()
+      } catch (_) {}
+      await new Promise(function (resolve) {
+        server.close(function () {
+          resolve()
+        })
+      })
+    }
+  })
+
   it('listen: final ACK completes handshake even if shouldAccept only allows bare SYN', async function () {
     /** @type {Buffer[]} */
     const outboundFramed = []
