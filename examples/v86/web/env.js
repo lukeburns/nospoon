@@ -44,8 +44,10 @@ function applyBrowserNetProxyFromLocation () {
         pathname: '/api/browser-net'
       })
     } else {
+      const h = u.hostname
+      const looksLikeCid = !h.includes('.') && h.length >= 46
       setBrowserNetProxy({
-        hostname: 'middle',
+        hostname: looksLikeCid ? h : 'middle',
         port: MIDDLE_WS_PORT,
         pathname: '/api/browser-net'
       })
