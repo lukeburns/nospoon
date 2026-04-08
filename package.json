@@ -39,7 +39,6 @@
     "lib/direct-pool.js",
     "lib/framing.js",
     "lib/hub-directory.js",
-    "lib/ipfs-mesh-announce.js",
     "lib/ip-subnet.js",
     "lib/key-encoding.js",
     "lib/key-address.js",

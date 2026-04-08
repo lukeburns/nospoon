@@ -1085,12 +1085,10 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                     </ul>
                   ) : (
                     <p className="dim ipfs-mesh-peers-empty">
-                      No mesh announces recorded yet. Rows appear only when a remote peer sends nospoon’s
-                      in-tunnel Helia handshake on the <strong>same Hyperswarm stream</strong> as the VPN mesh
-                      (not from Kubo or arbitrary libp2p). Both sides need the <strong>control-plane</strong>{' '}
-                      stack (<code>nospoon web</code> / server with DNS + IPFS), embedded Helia on, and this
-                      build; standalone <code>createClient</code> / hub clients do not exchange these frames. Disable with{' '}
-                      <code>NOSPOON_HELIA_MESH_ANNOUNCE=0</code>.
+                      No mesh peers with an active shared Hyperswarm tunnel yet. Rows list remote keys that have a
+                      live tunnel; libp2p dials their mesh IP on the Helia swarm port and the <strong>PeerId</strong>{' '}
+                      fills in after the TLS/Noise handshake. Both sides need embedded Helia and reachable mesh
+                      addresses (control-plane with DNS + IPFS).
                     </p>
                   )}
                 </div>
