@@ -493,11 +493,10 @@ async function initV86HelloDemo (opts) {
             emulator.keyboard_send_scancodes([
               0xBA, 0x9D, 0xAA, 0xB6, 0xB8
             ])
-            // Use a virtual nameserver IP that's different from the guest's
-            // own address so the kernel routes it through NE2000.  The bridge
-            // intercepts all UDP port 53 packets regardless of dest IP.
+            // Use the subnet broadcast as the nameserver — it's never
+            // allocated to a peer and the kernel won't loopback-deliver it.
             var parts = boundIp.split('.')
-            var nsIp = parts[0] + '.' + parts[1] + '.' + parts[2] + '.254'
+            var nsIp = parts[0] + '.' + parts[1] + '.' + parts[2] + '.255'
             emulator.keyboard_send_text(
               'ifconfig ed0 inet ' + boundIp + '/24 && ' +
               'echo "nameserver ' + nsIp + '" > /etc/resolv.conf\n'

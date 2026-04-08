@@ -42,13 +42,12 @@ sleep 1
 /usr/sbin/sshd
 
 # --- DNS resolver (bridge intercepts UDP:53 in-process) ---
-# The actual IP doesn't matter — the bridge handles it — but
-# it must differ from this host's own address.
-echo "nameserver 10.0.2.254" > /etc/resolv.conf
+# Subnet broadcast — never allocated to a peer, kernel won't loopback.
+echo "nameserver 10.0.2.255" > /etc/resolv.conf
 
 echo ""
 echo "=== v86 mesh guest ready ==="
 echo "  sshd listening on port 22 (open root, no password)"
-echo "  DNS: nameserver 10.0.2.254 (bridge-scoped)"
+echo "  DNS: nameserver 10.0.2.255 (bridge-scoped)"
 echo "  save a browser snapshot so this persists across reloads"
 echo ""
