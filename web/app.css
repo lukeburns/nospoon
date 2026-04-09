@@ -608,10 +608,26 @@ p.ipfs-mesh-peers-empty {
   display: block;
   word-break: break-word;
 }
+.ipfs-mesh-alt-details {
+  margin: 0.35rem 0 0;
+  font-size: 10px;
+}
+.ipfs-mesh-alt-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+}
+.ipfs-mesh-alt-details summary::-webkit-details-marker {
+  display: none;
+}
+.ipfs-mesh-alt-details[open] summary {
+  margin-bottom: 0.25rem;
+}
 .ipfs-mesh-alt-addrs {
   list-style: none;
-  margin: 0.25rem 0 0 0.5rem;
-  padding: 0;
+  margin: 0;
+  padding: 0 0 0 0.5rem;
   font-size: 10px;
 }
 .ipfs-mesh-conn {
@@ -639,4 +655,78 @@ button.ipfs-mesh-dial-btn {
 
 .virtual-interfaces-card {
   margin-top: 0.35rem;
+}
+
+/* IPFS: mesh peers highlighted above the fold */
+.ipfs-mesh-hero {
+  margin: 0.5rem 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  background: rgba(88, 166, 255, 0.06);
+  border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--line));
+  border-radius: 6px;
+}
+.ipfs-mesh-hero-head {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--acc);
+  margin-bottom: 0.4rem;
+}
+.ipfs-mesh-hero .ipfs-mesh-peer-list > li:first-child {
+  margin-top: 0;
+}
+.ipfs-status-grid-compact {
+  margin-top: 0.35rem;
+}
+.ipfs-diag-inner {
+  padding-top: 0.25rem;
+}
+.ipfs-diag-inner .ipfs-status-row {
+  margin: 0.15rem 0;
+}
+.ipfs-addr-accordion {
+  margin: 0.45rem 0 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+.ipfs-addr-accordion summary {
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+}
+.ipfs-addr-accordion summary::-webkit-details-marker {
+  display: none;
+}
+.ipfs-addr-accordion summary::before {
+  content: '▸ ';
+  color: var(--acc);
+  display: inline-block;
+  transition: transform 0.1s ease;
+}
+.ipfs-addr-accordion[open] summary::before {
+  transform: rotate(90deg);
+}
+.ipfs-addr-accordion > ul {
+  margin: 0;
+  padding: 0 0.5rem 0.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.ipfs-gateway-card > .ipfs-gateway-boot-detail {
+  margin: 0.25rem 0 0;
+}
+.dns-manual-accordion-body {
+  padding: 0 0.5rem 0.5rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.dns-manual-accordion-body .dns-manual-row:first-child {
+  margin-top: 0;
 }

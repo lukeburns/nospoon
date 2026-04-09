@@ -480,7 +480,6 @@ function TopicCard ({ topic, onLeave, reservationRows = [], dnsEnabled = false }
         </button>
       </div>
       <InterfaceReservationsBlock
-        blurb="Reserve the next free IPv4 in this topic subnet before a peer is on the mesh. Connect also joins the primary direct pool for that key (helps discovery paths)."
         defaultOpen={false}
         rows={reservationRows}
         parseKeyHex={keyHexFromTopicMeshIdKey}
@@ -543,11 +542,7 @@ function PrimaryInterfaceCard ({
   dnsEnabled = false
 }) {
   if (!directPool) {
-    return (
-      <p className="dim">
-        Primary TUN is not available yet. Routing controls show up once the direct pool is initialized.
-      </p>
-    )
+    return <p className="dim">Primary TUN not ready yet.</p>
   }
   return (
     <div className="card interface-card">
@@ -559,7 +554,6 @@ function PrimaryInterfaceCard ({
         </span>
       </div>
       <InterfaceReservationsBlock
-        blurb="Reserve the next free IPv4 in the primary subnet before a HyperDHT stream exists. Connect opens a direct peer session using the reserved address."
         defaultOpen={false}
         rows={primaryReservationRows}
         parseKeyHex={keyHexFromPrimaryMeshIdKey}
@@ -900,7 +894,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
         })
         .then(function (st) {
           if (typeof onApplied === 'function') onApplied(st)
-          setMsg({ kind: 'ok', text: 'Mesh Helia dial requested.' })
+          setMsg({ kind: 'ok', text: 'Mesh dial queued.' })
           window.setTimeout(function () {
             setMsg(null)
           }, 2800)
@@ -936,6 +930,95 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     }
   }
 
+  const meshPeersDupWarn =
+    Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 1
+      ? (function () {
+          const ips = i.heliaMeshPeers.map(function (r) {
+            return r.meshIpv4
+          })
+          const uniq = new Set(ips)
+          if (uniq.size >= ips.length) return null
+          return (
+            <p className="form-status err meta-tight ipfs-mesh-dup-ip" role="alert">
+              Duplicate mesh IPs across rows — each peer needs a distinct alias.
+            </p>
+          )
+        })()
+      : null
+
+  const meshPeersBody =
+    Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
+      <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
+        {i.heliaMeshPeers.map(function (row) {
+          const statusTitle =
+            row.meshHeliaLastDialError != null &&
+            String(row.meshHeliaLastDialError).trim() !== ''
+              ? 'Last dial error: ' + row.meshHeliaLastDialError
+              : undefined
+          const dialBusy = meshDialBusyHex === row.hyperKeyHex
+          const connecting =
+            (row.meshHeliaConnectState === 'connecting' || dialBusy) && !row.connected
+          return (
+            <li key={row.hyperKeyHex}>
+              <span className="ipfs-mesh-peer-line">
+                <code className="ipfs-multiaddr" title={row.hyperKeyHex}>
+                  {row.hyperKeyZ32}
+                </code>
+                <span className="dim"> → </span>
+                <code className="ipfs-multiaddr" title={row.ipfsPeerId}>
+                  {row.primaryMultiaddr}
+                </code>
+                <span
+                  className={
+                    connecting
+                      ? 'ipfs-mesh-conn ipfs-mesh-conn-connecting'
+                      : meshHeliaConnClass(row)
+                  }
+                  title={statusTitle}
+                >
+                  {' '}
+                  (
+                  {connecting ? 'connecting…' : meshHeliaConnectLabel(row)})
+                </span>
+                <button
+                  type="button"
+                  className="ipfs-mesh-dial-btn"
+                  disabled={dialBusy || row.meshHeliaConnectState === 'connecting'}
+                  title="Retry mesh dial"
+                  onClick={function () {
+                    triggerMeshHeliaDial(row)
+                  }}
+                >
+                  {dialBusy ? '…' : 'Dial'}
+                </button>
+              </span>
+              {row.multiaddrs.length > 1 ? (
+                <details className="ipfs-mesh-alt-details">
+                  <summary>
+                    +{row.multiaddrs.length - 1} multiaddr
+                    {row.multiaddrs.length - 1 === 1 ? '' : 's'}
+                  </summary>
+                  <ul className="ipfs-mesh-alt-addrs meta-tight">
+                    {row.multiaddrs.slice(1).map(function (ma) {
+                      return (
+                        <li key={ma}>
+                          <code className="ipfs-multiaddr dim">{ma}</code>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </details>
+              ) : null}
+            </li>
+          )
+        })}
+      </ul>
+    ) : (
+      <p className="dim ipfs-mesh-peers-empty">
+        No active Hyperswarm tunnels to remote peers yet.
+      </p>
+    )
+
   return (
     <div className="card interface-card ipfs-gateway-card">
       <div className="interface-card-head">
@@ -945,19 +1028,26 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           <span className={'ipfs-gateway-state ' + stateClass}>{stateLabel}</span>
         </span>
       </div>
+      {stateDetail ? (
+        <p className="dim meta-tight ipfs-gateway-boot-detail" role="status">
+          {stateDetail}
+        </p>
+      ) : null}
+      {i.mode === 'helia' ? (
+        <div className="ipfs-mesh-hero">
+          <div className="ipfs-mesh-hero-head">Mesh libp2p peers</div>
+          {meshPeersDupWarn}
+          {meshPeersBody}
+        </div>
+      ) : null}
       <div className="policy-controls">
-        {stateDetail ? (
-          <p className="dim meta-tight ipfs-gateway-boot-detail" role="status">
-            {stateDetail}
-          </p>
-        ) : null}
         {!dnsEnabled || !dnsListening ? (
           <p className="form-status err" role="alert">
-            Turn on the DNS server (above) and ensure it is listening so CID hostnames resolve to this
-            gateway.
+            Enable the DNS server so CID hostnames resolve to this gateway.
           </p>
         ) : null}
-        <div className="ipfs-status-grid">
+
+        <div className="ipfs-status-grid ipfs-status-grid-compact">
           <div className="ipfs-status-row">
             <span className="dim">HTTP</span>
             <span>
@@ -977,12 +1067,12 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
             <span>
               {i.mode === 'external' ? (
                 <>
-                  External gateway{' '}
+                  External{' '}
                   <code className="ipfs-config-detail">{i.externalGatewayUrl || '—'}</code>
                 </>
               ) : (
                 <>
-                  Embedded Helia —{' '}
+                  Helia{' '}
                   <code className="ipfs-config-detail" title={i.dataDir || ''}>
                     {i.dataDir || '~/.nospoon/helia'}
                   </code>
@@ -992,7 +1082,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           </div>
           {i.mode === 'helia' ? (
             <div className="ipfs-status-row">
-              <span className="dim">Primary swarm (LAN)</span>
+              <span className="dim">Primary swarm</span>
               <span>
                 {i.heliaPrimarySwarmIpv4 != null && String(i.heliaPrimarySwarmIpv4).trim() !== '' ? (
                   <code className="ipfs-config-detail ipfs-primary-swarm-ip">
@@ -1000,9 +1090,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   </code>
                 ) : (
                   <span className="dim">
-                    <code>0.0.0.0</code> — all interfaces (or unset default route). Non–spoon-topic peers
-                    typically dial this LAN address. Override with{' '}
-                    <code>NOSPOON_HELIA_BIND_IPV4</code> / <code>NOSPOON_HELIA_SWARM_BIND</code>.
+                    <code>0.0.0.0</code> (default route)
                   </span>
                 )}
               </span>
@@ -1010,7 +1098,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           ) : null}
           {i.mode === 'helia' ? (
             <div className="ipfs-status-row">
-              <span className="dim">Mesh TUN extras</span>
+              <span className="dim">Mesh TUN</span>
               <span>
                 {Array.isArray(i.heliaMeshListenIps) && i.heliaMeshListenIps.length > 0 ? (
                   i.heliaMeshListenIps.map(function (ip, idx) {
@@ -1022,10 +1110,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                     )
                   })
                 ) : (
-                  <span className="dim">
-                    None yet — spoon primary / topic TUN addresses add <code>/tcp/4011</code> here for mesh-only
-                    paths (optional if you only use LAN).
-                  </span>
+                  <span className="dim">—</span>
                 )}
               </span>
             </div>
@@ -1033,70 +1118,40 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
           {i.mode === 'helia' && i.heliaLibp2p ? (
             <>
               <div className="ipfs-status-row">
-                <span className="dim">libp2p peer</span>
+                <span className="dim">Local PeerId</span>
                 <code className="ipfs-config-detail ipfs-peer-id" title={i.heliaLibp2p.peerId}>
                   {i.heliaLibp2p.peerId}
                 </code>
               </div>
               <div className="ipfs-status-row">
-                <span className="dim">Swarm connections</span>
+                <span className="dim">Connections</span>
                 <span>{i.heliaLibp2p.connections}</span>
               </div>
+            </>
+          ) : null}
+          {i.lastError ? (
+            <p className="form-status err ipfs-status-err" role="alert">
+              {i.lastError}
+            </p>
+          ) : null}
+        </div>
+
+        {i.mode === 'helia' && i.heliaLibp2p ? (
+          <PolicyDisclosure title="libp2p diagnostics" variant="interface" defaultOpen={false}>
+            <div className="ipfs-diag-inner">
               <div className="ipfs-status-row">
                 <span className="dim">DHT</span>
                 <span>
-                  {i.heliaDhtClientMode ? 'client mode' : 'server mode'}
-                  {typeof i.heliaLibp2p.nodeMajor === 'number' &&
-                  i.heliaLibp2p.nodeMajor < 22 ? (
-                    <span className="dim">
-                      {' '}
-                      · Node &lt; 22: QUIC listener disabled (use Node 22+ for{' '}
-                      <code>/quic-v1</code> like Kubo)
-                    </span>
+                  {i.heliaDhtClientMode ? 'client' : 'server'}
+                  {typeof i.heliaLibp2p.nodeMajor === 'number' && i.heliaLibp2p.nodeMajor < 22 ? (
+                    <span className="dim"> · Node &lt; 22: no QUIC listener</span>
                   ) : null}
                 </span>
               </div>
-              <p className="dim meta-tight ipfs-libp2p-hint">
-                Count of open sessions to remote IPFS peers right now. The first address list is{' '}
-                <strong>verified</strong> dial addresses libp2p will advertise. Any multiaddr containing{' '}
-                <code>/p2p-circuit</code> is a <strong>relay path</strong> (dial via a public relay such as
-                bootstrap infra — e.g. <code>104.x</code> — not your home WAN). Kubo’s{' '}
-                <code>/ip4/76…/udp/12634/quic-v1</code>-style lines are <strong>direct</strong> NAT to your
-                router. Helia defaults to swarm <code>4011</code>; Kubo often uses <code>4001</code> with a
-                different external port — you need UPnP or manual forwards for <strong>4011</strong> too, or
-                set <code>NOSPOON_HELIA_SWARM_PORT</code> when Kubo is stopped. TCP/QUIC bind to the
-                default-route LAN IPv4 automatically (NAT-PMP + UPnP like Kubo);{' '}
-                <code>NOSPOON_HELIA_SWARM_BIND=wildcard</code> restores <code>0.0.0.0</code>,{' '}
-                <code>NOSPOON_HELIA_NAT_PMP=0</code> disables NAT-PMP. NAT-PMP is registered before UPnP
-                SSDP; if Kubo (or another node) already holds UDP <code>5350</code> on this machine, stop
-                it briefly to test Helia alone. Optional{' '}
-                <code>NOSPOON_HELIA_ANNOUNCE_NO_CIRCUIT=1</code> drops relay addrs from announcements (only if
-                you have a direct public path or <code>NOSPOON_HELIA_APPEND_ANNOUNCE</code>). UPnP
-                auto-confirm defaults on (<code>NOSPOON_HELIA_UPNP_AUTO_CONFIRM=0</code> to disable). Pinned
-                roots are re-announced periodically.
-              </p>
-              {i.heliaLibp2p.addressBuckets &&
-              Array.isArray(i.heliaLibp2p.addressBuckets.relay) &&
-              i.heliaLibp2p.addressBuckets.relay.length > 0 ? (
-                <p className="dim meta-tight ipfs-libp2p-hint">
-                  Address summary (verified):{' '}
-                  <strong>{i.heliaLibp2p.addressBuckets.relay.length}</strong> relay-circuit,{' '}
-                  <strong>{(i.heliaLibp2p.addressBuckets.local || []).length}</strong> local,{' '}
-                  <strong>{(i.heliaLibp2p.addressBuckets.public || []).length}</strong> public direct.
-                  {i.heliaLibp2p.announceNoCircuit ? (
-                    <>
-                      {' '}
-                      Relay addrs are <strong>omitted</strong> from announcements (
-                      <code>NOSPOON_HELIA_ANNOUNCE_NO_CIRCUIT</code>).
-                    </>
-                  ) : null}
-                </p>
-              ) : null}
               <div className="ipfs-status-row">
                 <span className="dim">Dial queue</span>
                 <span>
-                  {Number(i.heliaLibp2p.dialQueued) || 0} queued
-                  {', '}
+                  {Number(i.heliaLibp2p.dialQueued) || 0} queued,{' '}
                   {Number(i.heliaLibp2p.dialActive) || 0} active
                 </span>
               </div>
@@ -1104,8 +1159,29 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                 <span className="dim">Peer store</span>
                 <span>{Number(i.heliaLibp2p.peerStorePeers) || 0} known</span>
               </div>
-              <div className="ipfs-status-row ipfs-multiaddrs-row">
-                <span className="dim">Multiaddrs (verified)</span>
+              {i.heliaLibp2p.addressBuckets &&
+              Array.isArray(i.heliaLibp2p.addressBuckets.relay) &&
+              i.heliaLibp2p.addressBuckets.relay.length > 0 ? (
+                <p className="dim meta-tight">
+                  Verified addr buckets:{' '}
+                  <strong>{i.heliaLibp2p.addressBuckets.relay.length}</strong> relay,{' '}
+                  <strong>{(i.heliaLibp2p.addressBuckets.local || []).length}</strong> local,{' '}
+                  <strong>{(i.heliaLibp2p.addressBuckets.public || []).length}</strong> public.
+                  {i.heliaLibp2p.announceNoCircuit ? (
+                    <>
+                      {' '}
+                      (<code>NOSPOON_HELIA_ANNOUNCE_NO_CIRCUIT</code>)
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+              <p className="dim meta-tight">
+                Advanced: <code>NOSPOON_HELIA_*</code> env (bind, port, NAT, announce).
+              </p>
+              <details className="ipfs-addr-accordion">
+                <summary>
+                  Verified multiaddrs ({(i.heliaLibp2p.multiaddrs || []).length})
+                </summary>
                 <ul className="ipfs-multiaddr-list meta-tight">
                   {(i.heliaLibp2p.multiaddrs || []).map(function (ma) {
                     return (
@@ -1115,11 +1191,10 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                     )
                   })}
                 </ul>
-              </div>
-              {Array.isArray(i.heliaLibp2p.listenMultiaddrs) &&
-              i.heliaLibp2p.listenMultiaddrs.length > 0 ? (
-                <div className="ipfs-status-row ipfs-multiaddrs-row">
-                  <span className="dim">Listen config</span>
+              </details>
+              {Array.isArray(i.heliaLibp2p.listenMultiaddrs) && i.heliaLibp2p.listenMultiaddrs.length > 0 ? (
+                <details className="ipfs-addr-accordion">
+                  <summary>Listen multiaddrs ({i.heliaLibp2p.listenMultiaddrs.length})</summary>
                   <ul className="ipfs-multiaddr-list meta-tight">
                     {i.heliaLibp2p.listenMultiaddrs.map(function (ma) {
                       return (
@@ -1129,12 +1204,11 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                       )
                     })}
                   </ul>
-                </div>
+                </details>
               ) : null}
-              {Array.isArray(i.heliaLibp2p.addressDetails) &&
-              i.heliaLibp2p.addressDetails.length > 0 ? (
-                <div className="ipfs-status-row ipfs-multiaddrs-row">
-                  <span className="dim">Address candidates</span>
+              {Array.isArray(i.heliaLibp2p.addressDetails) && i.heliaLibp2p.addressDetails.length > 0 ? (
+                <details className="ipfs-addr-accordion">
+                  <summary>Address candidates ({i.heliaLibp2p.addressDetails.length})</summary>
                   <ul className="ipfs-multiaddr-list meta-tight">
                     {i.heliaLibp2p.addressDetails.map(function (row) {
                       const key = row.multiaddr + row.type + String(row.verified)
@@ -1150,117 +1224,12 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                       )
                     })}
                   </ul>
-                </div>
+                </details>
               ) : null}
-              <div className="ipfs-status-row ipfs-multiaddrs-row ipfs-mesh-peers-block">
-                <span className="dim">Mesh IPFS peers</span>
-                <div className="ipfs-mesh-peers-body meta-tight">
-                  {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 1
-                    ? (function () {
-                        const ips = i.heliaMeshPeers.map(function (r) {
-                          return r.meshIpv4
-                        })
-                        const uniq = new Set(ips)
-                        if (uniq.size >= ips.length) return null
-                        return (
-                          <p className="form-status err meta-tight ipfs-mesh-dup-ip" role="alert">
-                            Several rows target the same mesh IP — each remote peer needs a distinct spoon alias.
-                            Check reservations and topic vs primary subnets.
-                          </p>
-                        )
-                      })()
-                    : null}
-                  {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
-                    <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
-                      {i.heliaMeshPeers.map(function (row) {
-                        const statusTitle =
-                          row.meshHeliaLastDialError != null &&
-                          String(row.meshHeliaLastDialError).trim() !== ''
-                            ? 'Last dial error: ' + row.meshHeliaLastDialError
-                            : undefined
-                        const dialBusy = meshDialBusyHex === row.hyperKeyHex
-                        const connecting =
-                          (row.meshHeliaConnectState === 'connecting' ||
-                            dialBusy) &&
-                          !row.connected
-                        return (
-                          <li key={row.hyperKeyHex}>
-                            <span className="ipfs-mesh-peer-line">
-                              <code className="ipfs-multiaddr" title={row.hyperKeyHex}>
-                                {row.hyperKeyZ32}
-                              </code>
-                              <span className="dim"> → </span>
-                              <code className="ipfs-multiaddr" title={row.ipfsPeerId}>
-                                {row.primaryMultiaddr}
-                              </code>
-                              <span
-                                className={
-                                  connecting
-                                    ? 'ipfs-mesh-conn ipfs-mesh-conn-connecting'
-                                    : meshHeliaConnClass(row)
-                                }
-                                title={statusTitle}
-                              >
-                                {' '}
-                                (
-                                {connecting
-                                  ? 'connecting…'
-                                  : meshHeliaConnectLabel(row)}
-                                )
-                              </span>
-                              <button
-                                type="button"
-                                className="ipfs-mesh-dial-btn"
-                                disabled={
-                                  dialBusy ||
-                                  row.meshHeliaConnectState === 'connecting'
-                                }
-                                title="Queue an immediate mesh Helia dial (debug)"
-                                onClick={function () {
-                                  triggerMeshHeliaDial(row)
-                                }}
-                              >
-                                {dialBusy ? '…' : 'Dial now'}
-                              </button>
-                            </span>
-                            {row.multiaddrs.length > 1 ? (
-                              <ul className="ipfs-mesh-alt-addrs meta-tight">
-                                {row.multiaddrs.slice(1).map(function (ma) {
-                                  return (
-                                    <li key={ma}>
-                                      <code className="ipfs-multiaddr dim">{ma}</code>
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                            ) : null}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  ) : (
-                    <p className="dim ipfs-mesh-peers-empty">
-                      No mesh peers with an active shared Hyperswarm tunnel yet. Rows list remote keys that have a
-                      live tunnel; libp2p dials their <strong>spoon alias</strong> (mesh TUN IP), not WAN.                       Helia listens on your <strong>primary LAN</strong> for libp2p by default; mesh TUN extras
-                      cover spoon/topic peers. If IPFS started before the mesh came up, check{' '}
-                      <strong>Mesh TUN extras</strong> — Helia may reload when TUNs appear. PeerId appears after
-                      TLS/Noise on the swarm port.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : null}
-          {i.lastError ? (
-            <p className="form-status err ipfs-status-err" role="alert">
-              {i.lastError}
-            </p>
-          ) : null}
-        </div>
-        <p className="policy-blurb dim meta-tight">
-          DNS answers <code>A</code> for multibase CID labels (e.g. <code>bafy…</code>) to this address.
-          Browsers send <code>Host: &lt;cid&gt;</code>; manual name <code>ipfs</code> points here too.
-        </p>
+            </div>
+          </PolicyDisclosure>
+        ) : null}
+
         <div className="ipfs-upload-block">
           <p className="policy-group-head dns-manual-head">Upload / seed locally</p>
           {i.mode === 'external' ? (
@@ -1269,9 +1238,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               machine, or switch backend to Helia above.
             </p>
           ) : !i.canUpload ? (
-            <p className="dim meta-tight">
-              Start the gateway (enable IPFS + DNS above); when Helia is ready, upload unlocks.
-            </p>
+            <p className="dim meta-tight">Enable IPFS and wait for Helia to finish starting.</p>
           ) : (
             <>
               <form className="ipfs-upload-form" onSubmit={uploadFile}>
@@ -1299,10 +1266,8 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                 </button>
               </form>
               <p className="dim meta-tight">
-                File and folder uploads stream to disk, then into the running Helia worker (no second process).
-                Optional total-size cap: <code>NOSPOON_IPFS_MAX_UPLOAD_BYTES</code> (default 512&nbsp;GiB). Do not set
-                it to 64&nbsp;MiB (<code>67108864</code>) — that was the old in-memory limit and will reject large
-                uploads.
+                Max upload size: <code>NOSPOON_IPFS_MAX_UPLOAD_BYTES</code> (default 512&nbsp;GiB; avoid{' '}
+                <code>67108864</code>).
               </p>
             </>
           )}
@@ -1354,82 +1319,81 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
             {msg.text}
           </p>
         ) : null}
-        <form className="dns-settings-form ipfs-settings-form" onSubmit={apply}>
-          <p className="policy-group-head dns-manual-head">Configuration</p>
-          <label className="policy-toggle-row dns-toggle-spaced">
-            <span className="policy-toggle-input">
-              <input
-                type="checkbox"
-                checked={Boolean(en)}
-                onChange={function (e) {
-                  setEn(e.target.checked)
-                }}
-                disabled={busy}
-              />
-            </span>
-            <span className="policy-toggle-body">IPFS gateway enabled</span>
-          </label>
-          <label>
-            Backend
-            <select
-              value={mode}
-              onChange={function (e) {
-                setMode(e.target.value)
-              }}
-              disabled={busy}
-            >
-              <option value="helia">Embedded Helia (local blockstore)</option>
-              <option value="external">Existing gateway (HTTP URL)</option>
-            </select>
-          </label>
-          {mode === 'external' ? (
-            <label>
-              Gateway base URL
-              <input
-                value={gateway}
-                onChange={function (e) {
-                  setGateway(e.target.value)
-                }}
-                placeholder="http://127.0.0.1:8080"
-                autoComplete="off"
-                disabled={busy}
-              />
-            </label>
-          ) : (
-            <label>
-              Helia data directory (optional)
-              <input
-                value={dataDir}
-                onChange={function (e) {
-                  setDataDir(e.target.value)
-                }}
-                placeholder="Default: ~/.nospoon/helia"
-                autoComplete="off"
-                disabled={busy}
-              />
-            </label>
-          )}
-          {mode === 'helia' ? (
+        <PolicyDisclosure title="Gateway settings" variant="interface" defaultOpen={false}>
+          <form className="dns-settings-form ipfs-settings-form" onSubmit={apply}>
             <label className="policy-toggle-row dns-toggle-spaced">
               <span className="policy-toggle-input">
                 <input
                   type="checkbox"
-                  checked={heliaDhtClient}
+                  checked={Boolean(en)}
                   onChange={function (e) {
-                    setHeliaDhtClient(e.target.checked)
+                    setEn(e.target.checked)
                   }}
                   disabled={busy}
                 />
               </span>
-              <span className="policy-toggle-body">
-                Helia DHT client mode (skip full DHT server; use for constrained networks)
-              </span>
+              <span className="policy-toggle-body">Gateway enabled</span>
             </label>
-          ) : null}
-          <button type="submit" disabled={busy}>
-            {busy ? 'Applying…' : 'Apply'}
-          </button>
-        </form>
+            <label>
+              Backend
+              <select
+                value={mode}
+                onChange={function (e) {
+                  setMode(e.target.value)
+                }}
+                disabled={busy}
+              >
+                <option value="helia">Embedded Helia</option>
+                <option value="external">External HTTP gateway</option>
+              </select>
+            </label>
+            {mode === 'external' ? (
+              <label>
+                Base URL
+                <input
+                  value={gateway}
+                  onChange={function (e) {
+                    setGateway(e.target.value)
+                  }}
+                  placeholder="http://127.0.0.1:8080"
+                  autoComplete="off"
+                  disabled={busy}
+                />
+              </label>
+            ) : (
+              <label>
+                Data directory
+                <input
+                  value={dataDir}
+                  onChange={function (e) {
+                    setDataDir(e.target.value)
+                  }}
+                  placeholder="~/.nospoon/helia"
+                  autoComplete="off"
+                  disabled={busy}
+                />
+              </label>
+            )}
+            {mode === 'helia' ? (
+              <label className="policy-toggle-row dns-toggle-spaced">
+                <span className="policy-toggle-input">
+                  <input
+                    type="checkbox"
+                    checked={heliaDhtClient}
+                    onChange={function (e) {
+                      setHeliaDhtClient(e.target.checked)
+                    }}
+                    disabled={busy}
+                  />
+                </span>
+                <span className="policy-toggle-body">DHT client-only mode</span>
+              </label>
+            ) : null}
+            <button type="submit" disabled={busy}>
+              {busy ? 'Applying…' : 'Apply'}
+            </button>
+          </form>
+        </PolicyDisclosure>
       </div>
     </div>
   )
@@ -1638,10 +1602,7 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
       <div className="policy-controls">
         <PolicyDisclosure title="DNS interface" variant="interface" defaultOpen={false}>
           <p className="policy-blurb dim">
-            UDP DNS for this control plane: <strong>z32(key)</strong> and{' '}
-            <strong>z32(key).topicRef</strong> (topic UUID or topic name) resolve to mesh IPv4 using
-            the same reservations and tunnels as the web UI. Other names use the manual table or
-            upstream forwarding.
+            Mesh names <code>z32</code> / <code>z32.topic</code>; everything else forwards or uses manual records.
           </p>
           {d.lastError ? (
             <p className="form-status err" role="alert">
@@ -1787,18 +1748,15 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
                   })
                 )}
                 <p className="dim meta-tight dns-loopback-foot">
-                  Leave IPv4 empty to pick the first unused address in <code>10.254.0.0/16</code>{' '}
-                  (skips addresses in use on any interface). Otherwise use private IPv4 or{' '}
-                  <code>127.0.0.0/8</code> except <code>127.0.0.1</code>. Runs <code>ifconfig</code>{' '}
-                  (macOS) or <code>ip</code> (Linux); typically requires root.
+                  Empty IPv4 → auto from <code>10.254.0.0/16</code>. Needs root for <code>ifconfig</code> /{' '}
+                  <code>ip</code>.
                 </p>
               </>
             )}
           </div>
           <p className="policy-group-head dns-manual-head">Manual hostnames</p>
           <p className="policy-blurb dim meta-tight">
-            With no IPv4 and no IPv6, a loopback alias is allocated (same rules as above) and used
-            as the A record.
+            Omit A/AAAA to auto-allocate loopback (same rules as above).
           </p>
           <form className="dns-manual-form" onSubmit={onManualSubmit}>
             <label>
@@ -1818,38 +1776,43 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
           {manual.length === 0 ? (
             <p className="dim meta-tight">(no manual records)</p>
           ) : (
-            manual.map(function (row) {
-              return (
-                <div key={row.hostname} className="row dns-manual-row">
-                  <div className="peer-row-head">
-                    <span>
-                      <strong>{row.hostname}</strong>
-                      {row.ipv4 ? (
-                        <>
-                          {' → '}
-                          <IpLink ip={row.ipv4} />
-                        </>
-                      ) : null}
-                      {row.ipv6 ? (
-                        <>
-                          {' · '}
-                          <span className="dim">{row.ipv6}</span>
-                        </>
-                      ) : null}
-                    </span>
-                    <button
-                      type="button"
-                      className="small"
-                      onClick={function () {
-                        deleteManual(row.hostname)
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              )
-            })
+            <details className="ipfs-addr-accordion dns-manual-accordion">
+              <summary>Records ({manual.length})</summary>
+              <div className="dns-manual-accordion-body">
+                {manual.map(function (row) {
+                  return (
+                    <div key={row.hostname} className="row dns-manual-row">
+                      <div className="peer-row-head">
+                        <span>
+                          <strong>{row.hostname}</strong>
+                          {row.ipv4 ? (
+                            <>
+                              {' → '}
+                              <IpLink ip={row.ipv4} />
+                            </>
+                          ) : null}
+                          {row.ipv6 ? (
+                            <>
+                              {' · '}
+                              <span className="dim">{row.ipv6}</span>
+                            </>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          className="small"
+                          onClick={function () {
+                            deleteManual(row.hostname)
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </details>
           )}
         </PolicyDisclosure>
       </div>
@@ -1875,16 +1838,13 @@ function BrowserNetProxySection ({ data, error }) {
   return (
     <div className="browser-net-proxy-card virtual-interfaces-card">
       <p className="meta-tight dim">
-        Default mesh bind IP for <code>listen()</code> (no host):{' '}
+        Default bind (no host in <code>listen()</code>):{' '}
         <strong className="browser-net-ip">{ip || '—'}</strong>
       </p>
       <div className="policy-group browser-net-group">
-        <p className="policy-group-head">Virtual listeners</p>
-        <p className="meta-tight dim browser-net-blurb">
-          <code>host:port</code> sockets forwarded to a browser tab over the WebSocket proxy (one registration per address).
-        </p>
+        <p className="policy-group-head">Listeners ({listeners.length})</p>
         {listeners.length === 0 ? (
-          <p className="dim meta-tight">(none — use browser-net <code>listen</code> from a page)</p>
+          <p className="dim meta-tight">(none)</p>
         ) : (
           <ul className="browser-net-list">
             {listeners.map(function (row, i) {
@@ -2136,6 +2096,17 @@ export default function App () {
       </p>
       <p className="meta">Public key: <a href={`http://${s.clientPublicKeyZ32}/`} target="_blank" rel="noopener noreferrer" className="peer-key-link">{s.clientPublicKeyZ32 || '—'}</a></p>
 
+      <h2>DNS</h2>
+      <DnsInterfaceCard dns={dns} onPatchDns={patchDns} />
+
+      <h2>IPFS gateway</h2>
+      <IpfsGatewayCard
+        ipfs={dns.ipfsDweb}
+        dnsEnabled={Boolean(dns.enabled)}
+        dnsListening={Boolean(dns.listening)}
+        onApplied={mergeIpfsStatus}
+      />
+
       <h2>Primary interface</h2>
       <form onSubmit={onPeerSubmit}>
         <label>
@@ -2185,27 +2156,13 @@ export default function App () {
         ))
       )}
 
-      <h2>Virtual interfaces</h2>
-      <p className="meta dim">
-        Virtual TCP listeners and streams bridged to browser tabs via the{' '}
-        <code>/api/browser-net</code> WebSocket (mesh middleman).
-      </p>
-      <BrowserNetProxySection data={browserNetStatus} error={browserNetError} />
-
-      <h2>DNS interface</h2>
-      <DnsInterfaceCard dns={dns} onPatchDns={patchDns} />
-
-      <h2>IPFS gateway</h2>
-      <p className="meta dim">
-        Serves UnixFS by <code>Host</code> (multibase CID) on a loopback alias; DNS must be on so{' '}
-        <code>A</code> queries resolve. See manual hostname <code>ipfs</code> in DNS.
-      </p>
-      <IpfsGatewayCard
-        ipfs={dns.ipfsDweb}
-        dnsEnabled={Boolean(dns.enabled)}
-        dnsListening={Boolean(dns.listening)}
-        onApplied={mergeIpfsStatus}
-      />
+      <h2>Browser-net</h2>
+      <PolicyDisclosure title="Virtual TCP (browser tabs)" variant="interface" defaultOpen={false}>
+        <p className="policy-blurb dim">
+          <code>/api/browser-net</code> WebSocket — mesh-bridged listeners and streams.
+        </p>
+        <BrowserNetProxySection data={browserNetStatus} error={browserNetError} />
+      </PolicyDisclosure>
     </>
   )
 }
