@@ -619,6 +619,18 @@ p.ipfs-mesh-peers-empty {
 .ipfs-mesh-conn-off {
   color: color-mix(in srgb, var(--dim, #888) 90%, var(--fg, #fff));
 }
+.ipfs-mesh-conn-connecting {
+  color: color-mix(in srgb, #ca0 80%, var(--fg, #fff));
+}
+.ipfs-mesh-conn-pending {
+  color: color-mix(in srgb, var(--dim, #888) 70%, #ca0);
+}
+button.ipfs-mesh-dial-btn {
+  margin-left: 0.35rem;
+  font-size: 11px;
+  padding: 0.12rem 0.4rem;
+  vertical-align: baseline;
+}
 
 .virtual-interfaces-card {
   margin-top: 0.35rem;

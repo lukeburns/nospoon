@@ -609,6 +609,25 @@ function PrimaryInterfaceCard ({
   )
 }
 
+function meshHeliaConnectLabel (row) {
+  const s = row.meshHeliaConnectState
+  if (s === 'connected' || (s == null && row.connected)) return 'connected'
+  if (s === 'connecting') return 'connecting…'
+  if (s === 'handshake_pending') return 'PeerId pending'
+  if (s === 'disconnected') return 'disconnected'
+  return row.connected ? 'connected' : 'disconnected'
+}
+
+function meshHeliaConnClass (row) {
+  const s = row.meshHeliaConnectState
+  if (s === 'connected' || (s == null && row.connected)) {
+    return 'ipfs-mesh-conn ipfs-mesh-conn-on'
+  }
+  if (s === 'connecting') return 'ipfs-mesh-conn ipfs-mesh-conn-connecting'
+  if (s === 'handshake_pending') return 'ipfs-mesh-conn ipfs-mesh-conn-pending'
+  return 'ipfs-mesh-conn ipfs-mesh-conn-off'
+}
+
 /**
  * @param {{ ipfs: object, dnsEnabled: boolean, dnsListening: boolean, onApplied?: function(object): void }} props
  */
@@ -623,6 +642,7 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
   const [seedsLoading, setSeedsLoading] = useState(false)
   const [seedsErr, setSeedsErr] = useState(null)
   const [unseedingCid, setUnseedingCid] = useState(null)
+  const [meshDialBusyHex, setMeshDialBusyHex] = useState(null)
   const [en, setEn] = useState(true)
   const [mode, setMode] = useState('helia')
   const [gateway, setGateway] = useState('http://127.0.0.1:8080')
@@ -854,6 +874,44 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     [loadSeeds, onApplied]
   )
 
+  const triggerMeshHeliaDial = useCallback(
+    function (row) {
+      if (!row || !row.meshIpv4) return
+      setMeshDialBusyHex(row.hyperKeyHex)
+      setMsg(null)
+      fetch('/api/ipfs/mesh-dial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meshIpv4: row.meshIpv4, port: row.port })
+      })
+        .then(function (r) {
+          return r.json().then(function (j) {
+            if (!r.ok) throw new Error(j.error || String(r.status))
+            return j
+          })
+        })
+        .then(function () {
+          return fetch('/api/ipfs').then(function (r) {
+            return r.json()
+          })
+        })
+        .then(function (st) {
+          if (typeof onApplied === 'function') onApplied(st)
+          setMsg({ kind: 'ok', text: 'Mesh Helia dial requested.' })
+          window.setTimeout(function () {
+            setMsg(null)
+          }, 2800)
+        })
+        .catch(function (err) {
+          setMsg({ kind: 'err', text: err.message || String(err) })
+        })
+        .finally(function () {
+          setMeshDialBusyHex(null)
+        })
+    },
+    [onApplied]
+  )
+
   let stateLabel = '—'
   let stateClass = 'dim'
   if (i.enabled === false) {
@@ -1047,6 +1105,16 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
                     <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
                       {i.heliaMeshPeers.map(function (row) {
+                        const statusTitle =
+                          row.meshHeliaLastDialError != null &&
+                          String(row.meshHeliaLastDialError).trim() !== ''
+                            ? 'Last dial error: ' + row.meshHeliaLastDialError
+                            : undefined
+                        const dialBusy = meshDialBusyHex === row.hyperKeyHex
+                        const connecting =
+                          (row.meshHeliaConnectState === 'connecting' ||
+                            dialBusy) &&
+                          !row.connected
                         return (
                           <li key={row.hyperKeyHex}>
                             <span className="ipfs-mesh-peer-line">
@@ -1059,14 +1127,33 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                               </code>
                               <span
                                 className={
-                                  row.connected
-                                    ? 'ipfs-mesh-conn ipfs-mesh-conn-on'
-                                    : 'ipfs-mesh-conn ipfs-mesh-conn-off'
+                                  connecting
+                                    ? 'ipfs-mesh-conn ipfs-mesh-conn-connecting'
+                                    : meshHeliaConnClass(row)
                                 }
+                                title={statusTitle}
                               >
                                 {' '}
-                                ({row.connected ? 'connected' : 'disconnected'})
+                                (
+                                {connecting
+                                  ? 'connecting…'
+                                  : meshHeliaConnectLabel(row)}
+                                )
                               </span>
+                              <button
+                                type="button"
+                                className="ipfs-mesh-dial-btn"
+                                disabled={
+                                  dialBusy ||
+                                  row.meshHeliaConnectState === 'connecting'
+                                }
+                                title="Queue an immediate mesh Helia dial (debug)"
+                                onClick={function () {
+                                  triggerMeshHeliaDial(row)
+                                }}
+                              >
+                                {dialBusy ? '…' : 'Dial now'}
+                              </button>
                             </span>
                             {row.multiaddrs.length > 1 ? (
                               <ul className="ipfs-mesh-alt-addrs meta-tight">
