@@ -772,10 +772,20 @@ function createBrowserNetMiddleware (opts) {
         }
         const prev = interfaces.get(bindIp)
         if (prev && prev.ws !== ws) {
-          try {
-            ws.send(JSON.stringify({ op: 'bind_interface_err', rid, error: 'interface already bound by another session' }))
-          } catch (_) {}
-          return
+          if (prev.ws.readyState !== WsSocket.OPEN) {
+            cleanupWs(prev.ws)
+          } else {
+            try {
+              ws.send(
+                JSON.stringify({
+                  op: 'bind_interface_err',
+                  rid,
+                  error: 'interface already bound by another session'
+                })
+              )
+            } catch (_) {}
+            return
+          }
         }
         interfaces.set(bindIp, { ws, clientId: ws._browserNetClientId })
         try {
@@ -997,16 +1007,20 @@ function createBrowserNetMiddleware (opts) {
         const k = listenKey(host, port)
         const prev = listeners.get(k)
         if (prev && prev.ws !== ws) {
-          try {
-            ws.send(
-              JSON.stringify({
-                op: 'listen_err',
-                rid,
-                error: 'port already bound by another session'
-              })
-            )
-          } catch (_) {}
-          return
+          if (prev.ws.readyState !== WsSocket.OPEN) {
+            cleanupWs(prev.ws)
+          } else {
+            try {
+              ws.send(
+                JSON.stringify({
+                  op: 'listen_err',
+                  rid,
+                  error: 'port already bound by another session'
+                })
+              )
+            } catch (_) {}
+            return
+          }
         }
         listeners.set(k, { ws, clientId: ws._browserNetClientId })
         try {
