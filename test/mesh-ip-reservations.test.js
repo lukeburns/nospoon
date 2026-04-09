@@ -33,6 +33,16 @@ describe('MeshIpReservationManager', function () {
     assert.equal(m.consumePrimaryReservation(KEY_A), null)
   })
 
+  it('reads primary reservation without consuming', function () {
+    const m = new MeshIpReservationManager()
+    m.setPrimaryCidr('10.0.0.1/24')
+    const reserved = m.reservePrimaryKey(KEY_A, new Set(['10.0.0.1']))
+    assert.equal(m.getPrimaryReservedIpv4ForKey(KEY_A), reserved)
+    assert.equal(m.getPrimaryReservedIpv4ForKey(KEY_A), reserved)
+    assert.equal(m.consumePrimaryReservation(KEY_A), reserved)
+    assert.equal(m.getPrimaryReservedIpv4ForKey(KEY_A), null)
+  })
+
   it('reserves topic peers per topic id', function () {
     const m = new MeshIpReservationManager()
     m.setTopicCidr('t1', '10.0.1.1/24')
