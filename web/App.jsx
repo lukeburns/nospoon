@@ -1906,7 +1906,6 @@ export default function App () {
   const [peerMsg, setPeerMsg] = useState(null)
   const [primaryResBusy, setPrimaryResBusy] = useState(false)
   const [primaryResMsg, setPrimaryResMsg] = useState(null)
-
   useEffect(() => {
     fetch('/api/status')
       .then((r) => r.json())
@@ -2086,8 +2085,12 @@ export default function App () {
 
   return (
     <>
-      <h1>nospoon control</h1>
-      {/* <p className="meta">HTTP API + live status (SSE). Bind defaults to loopback — expose with care.</p> */}
+      <header className="app-header">
+        <h1 className="app-title">nospoon control</h1>
+        <a className="how-nospoon-link" href="/how-nospoon">
+          ⓘ How nospoon works
+        </a>
+      </header>
       <p className="meta" id="live-line" aria-live="polite">
         <span className={'sse-dot ' + (sseState === 'open' ? 'on' : 'off')} />
         <span>

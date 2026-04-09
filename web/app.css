@@ -20,6 +20,33 @@ body {
   line-height: 1.45;
   font-size: 13px;
 }
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.35rem;
+}
+.app-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.how-nospoon-link {
+  display: inline-block;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--acc);
+  padding: 0.25rem 0.55rem;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-decoration: none;
+}
+.how-nospoon-link:hover {
+  background: rgba(88, 166, 255, 0.08);
+}
 h1 {
   font-size: 1.1rem;
   font-weight: 600;
