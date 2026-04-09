@@ -41,7 +41,10 @@ const emptyStatus = {
       canUpload: false,
       heliaDhtClientMode: false,
       heliaLibp2p: null,
-      heliaMeshPeers: []
+      heliaMeshPeers: [],
+      heliaBootProgress: null,
+      heliaMeshListenIps: [],
+      heliaPrimarySwarmIpv4: null
     }
   }
 }
@@ -914,6 +917,8 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
 
   let stateLabel = '—'
   let stateClass = 'dim'
+  /** @type {string | null} */
+  let stateDetail = null
   if (i.enabled === false) {
     stateLabel = 'Disabled'
     stateClass = 'dim'
@@ -924,8 +929,11 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
     stateLabel = 'Listening'
     stateClass = 'ok'
   } else {
-    stateLabel = 'Off or starting'
+    stateLabel = 'Starting…'
     stateClass = 'dim'
+    if (i.mode === 'helia' && i.heliaBootProgress) {
+      stateDetail = i.heliaBootProgress
+    }
   }
 
   return (
@@ -938,6 +946,11 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
         </span>
       </div>
       <div className="policy-controls">
+        {stateDetail ? (
+          <p className="dim meta-tight ipfs-gateway-boot-detail" role="status">
+            {stateDetail}
+          </p>
+        ) : null}
         {!dnsEnabled || !dnsListening ? (
           <p className="form-status err" role="alert">
             Turn on the DNS server (above) and ensure it is listening so CID hostnames resolve to this
@@ -977,6 +990,46 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               )}
             </span>
           </div>
+          {i.mode === 'helia' ? (
+            <div className="ipfs-status-row">
+              <span className="dim">Primary swarm (LAN)</span>
+              <span>
+                {i.heliaPrimarySwarmIpv4 != null && String(i.heliaPrimarySwarmIpv4).trim() !== '' ? (
+                  <code className="ipfs-config-detail ipfs-primary-swarm-ip">
+                    {i.heliaPrimarySwarmIpv4}
+                  </code>
+                ) : (
+                  <span className="dim">
+                    <code>0.0.0.0</code> — all interfaces (or unset default route). Non–spoon-topic peers
+                    typically dial this LAN address. Override with{' '}
+                    <code>NOSPOON_HELIA_BIND_IPV4</code> / <code>NOSPOON_HELIA_SWARM_BIND</code>.
+                  </span>
+                )}
+              </span>
+            </div>
+          ) : null}
+          {i.mode === 'helia' ? (
+            <div className="ipfs-status-row">
+              <span className="dim">Mesh TUN extras</span>
+              <span>
+                {Array.isArray(i.heliaMeshListenIps) && i.heliaMeshListenIps.length > 0 ? (
+                  i.heliaMeshListenIps.map(function (ip, idx) {
+                    return (
+                      <span key={ip}>
+                        {idx > 0 ? ', ' : null}
+                        <code className="ipfs-config-detail ipfs-mesh-bind-ip">{ip}</code>
+                      </span>
+                    )
+                  })
+                ) : (
+                  <span className="dim">
+                    None yet — spoon primary / topic TUN addresses add <code>/tcp/4011</code> here for mesh-only
+                    paths (optional if you only use LAN).
+                  </span>
+                )}
+              </span>
+            </div>
+          ) : null}
           {i.mode === 'helia' && i.heliaLibp2p ? (
             <>
               <div className="ipfs-status-row">
@@ -1102,6 +1155,21 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
               <div className="ipfs-status-row ipfs-multiaddrs-row ipfs-mesh-peers-block">
                 <span className="dim">Mesh IPFS peers</span>
                 <div className="ipfs-mesh-peers-body meta-tight">
+                  {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 1
+                    ? (function () {
+                        const ips = i.heliaMeshPeers.map(function (r) {
+                          return r.meshIpv4
+                        })
+                        const uniq = new Set(ips)
+                        if (uniq.size >= ips.length) return null
+                        return (
+                          <p className="form-status err meta-tight ipfs-mesh-dup-ip" role="alert">
+                            Several rows target the same mesh IP — each remote peer needs a distinct spoon alias.
+                            Check reservations and topic vs primary subnets.
+                          </p>
+                        )
+                      })()
+                    : null}
                   {Array.isArray(i.heliaMeshPeers) && i.heliaMeshPeers.length > 0 ? (
                     <ul className="ipfs-multiaddr-list meta-tight ipfs-mesh-peer-list">
                       {i.heliaMeshPeers.map(function (row) {
@@ -1173,9 +1241,10 @@ function IpfsGatewayCard ({ ipfs, dnsEnabled, dnsListening, onApplied }) {
                   ) : (
                     <p className="dim ipfs-mesh-peers-empty">
                       No mesh peers with an active shared Hyperswarm tunnel yet. Rows list remote keys that have a
-                      live tunnel; libp2p dials their mesh IP on the Helia swarm port and the <strong>PeerId</strong>{' '}
-                      fills in after the TLS/Noise handshake. Both sides need embedded Helia and reachable mesh
-                      addresses (control-plane with DNS + IPFS).
+                      live tunnel; libp2p dials their <strong>spoon alias</strong> (mesh TUN IP), not WAN.                       Helia listens on your <strong>primary LAN</strong> for libp2p by default; mesh TUN extras
+                      cover spoon/topic peers. If IPFS started before the mesh came up, check{' '}
+                      <strong>Mesh TUN extras</strong> — Helia may reload when TUNs appear. PeerId appears after
+                      TLS/Noise on the swarm port.
                     </p>
                   )}
                 </div>

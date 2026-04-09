@@ -471,6 +471,11 @@ button.small {
 .ipfs-gateway-state {
   font-weight: 600;
 }
+p.ipfs-gateway-boot-detail {
+  margin: 0.15rem 0 0.4rem;
+  font-size: 11px;
+  line-height: 1.45;
+}
 .ipfs-status-grid {
   margin: 0.5rem 0 0.35rem;
   padding: 0.45rem 0.5rem;
