@@ -3,7 +3,7 @@
 const { describe, it, before, after } = require('node:test')
 const assert = require('node:assert/strict')
 const http = require('http')
-const { createWhoisAuthProxy } = require('../lib/whois-auth-proxy')
+const { createWhoisAuthProxy } = require('../lib/dns/whois-auth-proxy')
 
 function httpGet (opts) {
   return new Promise(function (resolve, reject) {

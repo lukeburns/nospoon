@@ -6,8 +6,8 @@ const {
   parseMeshDnsName,
   normalizeFqdn,
   formatMeshTopicDnsName
-} = require('../lib/dns-mesh-name')
-const { encodeZ32 } = require('../lib/key-encoding')
+} = require('../lib/dns/dns-mesh-name')
+const { encodeZ32 } = require('../lib/wire/key-encoding')
 const crypto = require('crypto')
 const HyperDHT = require('hyperdht')
 

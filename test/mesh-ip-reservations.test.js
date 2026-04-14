@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { MeshIpReservationManager } = require('../lib/mesh-ip-reservations')
+const { MeshIpReservationManager } = require('../lib/mesh/mesh-ip-reservations')
 
 const KEY_A =
   'a'.repeat(64)

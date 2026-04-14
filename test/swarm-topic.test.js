@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const {
   swarmTopicCapability,
   timingSafeEqual
-} = require('../lib/swarm-topic')
+} = require('../lib/mesh/swarm-topic')
 
 describe('swarm-topic', function () {
   it('each side verifies the remote role namespace (hypercore-style)', function () {

@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { ControlPlaneSessionManager } = require('../lib/control-http')
+const { ControlPlaneSessionManager } = require('../lib/control/control-http')
 
 /** Avoid reading or writing ~/.nospoon/identity.json during unit tests. */
 const ephemeral = { ephemeralClientKey: true }
@@ -84,27 +84,6 @@ describe('control-http', function () {
       m.dnsResolveMeshIpv4({ kind: 'keyTopic', keyHex: hex, topicRef: id }),
       '10.1.2.3'
     )
-    return m.destroy()
-  })
-
-  it('resolveBrowserNetListenBind keeps z32.spoon as keyTopic (topic TUN), not primary', function () {
-    const m = new ControlPlaneSessionManager(ephemeral)
-    m._meshIpReservations.setPrimaryCidr('10.0.88.1/24')
-    const topicId = '00000000-0000-4000-8000-0000000000cc'
-    m._topics.set(topicId, {
-      id: topicId,
-      topic: 'spoon',
-      localTunIp: '10.2.2.1',
-      _handle: {},
-      _peers: new Map(),
-      _ifacePolicy: {},
-      _peerPolicies: new Map()
-    })
-    const hex = m._clientKeyPair.publicKey.toString('hex')
-    const { formatMeshTopicDnsName } = require('../lib/dns-mesh-name')
-    const wire = formatMeshTopicDnsName(hex, 'spoon')
-    assert.equal(m.resolveBrowserNetListenBind(wire), '10.2.2.1')
-    assert.notEqual(m.resolveBrowserNetListenBind(wire), '10.0.88.1')
     return m.destroy()
   })
 

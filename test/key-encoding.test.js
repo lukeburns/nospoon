@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { parse32Bytes, toHex32, encodeZ32 } = require('../lib/key-encoding')
+const { parse32Bytes, toHex32, encodeZ32 } = require('../lib/wire/key-encoding')
 const z32 = require('z32')
 
 describe('key-encoding', function () {

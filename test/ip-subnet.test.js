@@ -5,7 +5,7 @@ const {
   createPeerIpAllocator,
   allocateLowestAvailableIpv4,
   ipv4ContainedInCidr
-} = require('../lib/ip-subnet')
+} = require('../lib/ip/ip-subnet')
 
 describe('ip-subnet auto range', function () {
   it('pickFreeTenDotZeroSubnet skips assigned hosts', function () {

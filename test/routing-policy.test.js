@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const rp = require('../lib/routing-policy')
+const rp = require('../lib/route/routing-policy')
 
 describe('routing-policy', function () {
   it('resolvePeerPolicy keeps interface egress when peer only patches ingress', function () {

@@ -7,7 +7,7 @@ const {
   restore,
   isActive,
   mergeResolvConfBackupWithDnsServers
-} = require('../lib/dns-system-override-linux')
+} = require('../lib/dns/dns-system-override-linux')
 
 describe('dns-system-override-linux', function () {
   it('non-linux: apply is a no-op', function () {

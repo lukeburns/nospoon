@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { swarmDiscoveryKey, normalizeTopicBytes } = require('../lib/swarm-mesh')
+const { swarmDiscoveryKey, normalizeTopicBytes } = require('../lib/mesh/swarm-mesh')
 
 describe('swarm-mesh', function () {
   it('swarmDiscoveryKey is 32-byte blake2b over domain + topic', function () {

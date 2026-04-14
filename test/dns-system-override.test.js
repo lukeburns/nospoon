@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { apply, restore, isActive } = require('../lib/dns-system-override')
+const { apply, restore, isActive } = require('../lib/dns/dns-system-override')
 
 describe('dns-system-override (facade)', function () {
   it('does not activate when port is not 53 (any platform)', function () {

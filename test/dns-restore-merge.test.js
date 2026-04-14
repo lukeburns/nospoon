@@ -5,7 +5,7 @@ const assert = require('node:assert/strict')
 const {
   mergeSessionDnsWithPreApply,
   parseNameserversFromResolvBackup
-} = require('../lib/dns-restore-merge')
+} = require('../lib/dns/dns-restore-merge')
 
 describe('dns-restore-merge', function () {
   it('puts session upstream first and appends pre-apply fallbacks', function () {

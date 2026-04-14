@@ -4,8 +4,8 @@ const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
 const dgram = require('dgram')
 const dns = require('dns-packet')
-const { createDnsServer } = require('../lib/dns-server')
-const { encodeKeyLabel } = require('../lib/dns-mesh-name')
+const { createDnsServer } = require('../lib/dns/dns-server')
+const { encodeKeyLabel } = require('../lib/dns/dns-mesh-name')
 
 describe('dns-server', function () {
   it('manual IPv4-only: AAAA returns NOERROR with empty answers (NODATA)', async function () {

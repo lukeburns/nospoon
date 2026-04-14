@@ -6,9 +6,9 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
-const identityPath = '../lib/nospoon-identity'
+const identityPath = '../lib/identity/identity'
 
-describe('nospoon-identity', function () {
+describe('identity', function () {
   let prevHome
   let tmpRoot
 

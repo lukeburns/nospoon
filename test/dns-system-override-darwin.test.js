@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { apply, restore, isActive } = require('../lib/dns-system-override-darwin')
+const { apply, restore, isActive } = require('../lib/dns/dns-system-override-darwin')
 
 describe('dns-system-override-darwin', function () {
   it('non-darwin: apply is a no-op and does not throw', function () {

@@ -3,8 +3,8 @@
 const test = require('node:test')
 const assert = require('node:assert')
 const HyperDHT = require('hyperdht')
-const { createKeyAddressTable } = require('../lib/key-address')
-const { shouldHairpinToLocalStack } = require('../lib/routing')
+const { createKeyAddressTable } = require('../lib/mesh/key-address')
+const { shouldHairpinToLocalStack } = require('../lib/route/routing')
 
 test('shouldHairpinToLocalStack is true for local mesh IP via ka', () => {
   const kp = HyperDHT.keyPair()
