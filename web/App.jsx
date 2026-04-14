@@ -357,6 +357,53 @@ function CidrLink ({ cidr }) {
   )
 }
 
+/** Mesh DNS wire name (z32 or `z32.topic`) for href, or null if not representable. */
+function meshDnsWireNameFromMeshId (meshId) {
+  if (!meshId || typeof meshId !== 'object') return null
+  if (meshId.kind === 'key' && typeof meshId.keyHex === 'string' && meshId.keyHex.length === 64) {
+    const z = displayZ32FromHex64(meshId.keyHex)
+    if (!z) return null
+    const s = z.toLowerCase()
+    if (/^[a-z0-9][a-z0-9-]{0,62}$/i.test(s)) return s
+    return null
+  }
+  if (
+    meshId.kind === 'keyTopic' &&
+    typeof meshId.keyHex === 'string' &&
+    meshId.keyHex.length === 64 &&
+    typeof meshId.topicRef === 'string'
+  ) {
+    const z = displayZ32FromHex64(meshId.keyHex)
+    const t = String(meshId.topicRef).trim().toLowerCase()
+    if (!z || !t || t.indexOf('.') >= 0) return null
+    const s = `${z.toLowerCase()}.${t}`
+    if (/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(s) && s.length <= 253) return s
+    return null
+  }
+  return null
+}
+
+/**
+ * `http://{name}/` when embedded mesh DNS is answering and the host label is safe (same idea as PeerMeshKeyLink).
+ */
+function ManualDnsHostLink ({ name, dnsActive, className = 'peer-key-link', children }) {
+  const raw = String(name || '').trim()
+  if (!raw) return children != null ? children : '—'
+  const host = raw.toLowerCase()
+  const safe =
+    dnsActive &&
+    host.length <= 253 &&
+    /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(host)
+  if (safe) {
+    return (
+      <a href={`http://${host}/`} target="_blank" rel="noopener noreferrer" className={className}>
+        {children != null ? children : raw}
+      </a>
+    )
+  }
+  return <>{children != null ? children : raw}</>
+}
+
 /** When mesh DNS is on, peer keys become `http://<meshDnsWireName>/` (primary = z32 key; topic = z32.topic). */
 function PeerMeshKeyLink ({ z32, meshDnsWireName, dnsEnabled, strongClass }) {
   const safe =
@@ -601,6 +648,7 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
   const [loopbackAddBusy, setLoopbackAddBusy] = useState(false)
 
   const lb = d.loopback || { supported: false, aliases: [], error: null }
+  const dnsHostLinksActive = Boolean(d.enabled && d.listening)
 
   useEffect(
     function () {
@@ -659,18 +707,13 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
       e.preventDefault()
       const form = e.currentTarget
       const fd = new FormData(form)
-      const hostname = String(fd.get('dnsHost') || '').trim()
-      const ipv4 = String(fd.get('dnsIpv4') || '').trim()
-      const ipv6 = String(fd.get('dnsIpv6') || '').trim()
-      if (!hostname) return
+      const alias = String(fd.get('dnsAlias') || '').trim()
+      const target = String(fd.get('dnsTarget') || '').trim()
+      if (!alias || !target) return
       fetch('/api/dns/manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hostname,
-          ipv4: ipv4 || undefined,
-          ipv6: ipv6 || undefined
-        })
+        body: JSON.stringify({ alias, target })
       })
         .then(function (r) {
           return readJson(r)
@@ -878,8 +921,8 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
             <p className="policy-group-head">Loopback reservation</p>
             <p className="policy-blurb dim meta-tight">
               Add another IPv4 on loopback so you can bind a service (e.g. HTTP on port 80) on that
-              address without using <code>127.0.0.1</code>. Add a manual hostname below pointing at
-              the same IP so this DNS server answers for it.
+              address without using <code>127.0.0.1</code>. Add a manual alias below whose target is
+              that loopback IP so this DNS server answers for the name.
             </p>
             {!lb.supported ? (
               <p className="dim meta-tight">Loopback alias control is only available on macOS and Linux.</p>
@@ -948,23 +991,25 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
               </>
             )}
           </div>
-          <p className="policy-group-head dns-manual-head">Manual hostnames</p>
+          <p className="policy-group-head dns-manual-head">Manual aliases</p>
           <p className="policy-blurb dim meta-tight">
-            With no IPv4 and no IPv6, a loopback alias is allocated (same rules as above) and used
-            as the A record.
+            Short name → target. The target is read as IPv4/IPv6, a mesh key or{' '}
+            <code>key.topic</code> name, another manual alias on this host, or a hostname the OS can
+            resolve (stored as A/AAAA when it is not a local alias).
           </p>
           <form className="dns-manual-form" onSubmit={onManualSubmit}>
             <label>
-              Hostname
-              <input name="dnsHost" placeholder="app.lan" required autoComplete="off" />
+              Alias
+              <input name="dnsAlias" placeholder="alias" required autoComplete="off" />
             </label>
             <label>
-              IPv4
-              <input name="dnsIpv4" placeholder="optional" autoComplete="off" />
-            </label>
-            <label>
-              IPv6
-              <input name="dnsIpv6" placeholder="optional" autoComplete="off" />
+              Target
+              <input
+                name="dnsTarget"
+                placeholder="10.0.0.2 or hostname"
+                required
+                autoComplete="off"
+              />
             </label>
             <button type="submit">Add</button>
           </form>
@@ -972,21 +1017,73 @@ function DnsInterfaceCard ({ dns, onPatchDns }) {
             <p className="dim meta-tight">(no manual records)</p>
           ) : (
             manual.map(function (row) {
+              const k = row.kind || 'literal'
+              const meshWire = k === 'mesh' ? meshDnsWireNameFromMeshId(row.meshId) : null
               return (
                 <div key={row.hostname} className="row dns-manual-row">
                   <div className="peer-row-head">
                     <span>
-                      <strong>{row.hostname}</strong>
-                      {row.ipv4 ? (
+                      <ManualDnsHostLink name={row.hostname} dnsActive={dnsHostLinksActive}>
+                        <strong>{row.hostname}</strong>
+                      </ManualDnsHostLink>
+                      {k === 'mesh' ? (
                         <>
-                          {' → '}
-                          <IpLink ip={row.ipv4} />
+                          {' → mesh '}
+                          {meshWire ? (
+                            <ManualDnsHostLink name={meshWire} dnsActive={dnsHostLinksActive} className="dim peer-key-link">
+                              {row.meshKeyShort || '…'}
+                            </ManualDnsHostLink>
+                          ) : (
+                            <span className="dim">{row.meshKeyShort || '…'}</span>
+                          )}
+                          {row.resolvedIpv4 ? (
+                            <>
+                              {' · '}
+                              <IpLink ip={row.resolvedIpv4} />
+                            </>
+                          ) : (
+                            <span className="dim"> · (no mesh A yet)</span>
+                          )}
                         </>
                       ) : null}
-                      {row.ipv6 ? (
+                      {k === 'alias' ? (
                         <>
-                          {' · '}
-                          <span className="dim">{row.ipv6}</span>
+                          {' → '}
+                          <ManualDnsHostLink
+                            name={row.aliasTarget}
+                            dnsActive={dnsHostLinksActive}
+                            className="dim peer-key-link"
+                          >
+                            {row.aliasTarget}
+                          </ManualDnsHostLink>
+                          {row.resolvedIpv4 || row.resolvedIpv6 ? (
+                            <>
+                              {' · '}
+                              {row.resolvedIpv4 ? <IpLink ip={row.resolvedIpv4} /> : null}
+                              {row.resolvedIpv4 && row.resolvedIpv6 ? ' · ' : null}
+                              {row.resolvedIpv6 ? (
+                                <span className="dim">{row.resolvedIpv6}</span>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="dim"> · (unresolved)</span>
+                          )}
+                        </>
+                      ) : null}
+                      {k === 'literal' ? (
+                        <>
+                          {row.ipv4 ? (
+                            <>
+                              {' → '}
+                              <IpLink ip={row.ipv4} />
+                            </>
+                          ) : null}
+                          {row.ipv6 ? (
+                            <>
+                              {row.ipv4 ? ' · ' : ' → '}
+                              <span className="dim">{row.ipv6}</span>
+                            </>
+                          ) : null}
                         </>
                       ) : null}
                     </span>
