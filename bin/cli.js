@@ -87,6 +87,17 @@ function parseWebFlags (args) {
       flags.host = args[++i]
     } else if (args[i] === '--primary-cidr' && args[i + 1]) {
       flags.primaryCidr = validateCidr(args[++i], '--primary-cidr')
+    } else if (args[i] === '--seed' && args[i + 1]) {
+      try {
+        flags.seed = parseSeedArg(args[++i], '--seed')
+      } catch (e) {
+        console.error('Error:', e.message)
+        process.exit(1)
+      }
+    } else if (args[i] === '--no-system-dns') {
+      flags.noSystemDns = true
+    } else if (args[i] === '--darwin-system-dns') {
+      /* legacy no-op: system DNS override is on by default */
     } else if (args[i].startsWith('--')) {
       console.error(`Error: unknown web option: ${args[i]}`)
       process.exit(1)
@@ -285,6 +296,9 @@ Control plane (sudo for TUN when joining topics or peers):
   --port <num>          HTTP port (default: 80)
   --host <addr>         Bind address (default: auto loopback alias; DNS name nospoon when mesh DNS is on)
   --primary-cidr <c>    Fixed primary (direct pool) IPv4 CIDR instead of auto 10.0.x.1/24
+  --seed <z32|hex>      Control-plane Noise seed (default: load or create ~/.nospoon/identity.json)
+  --no-system-dns       Do not change OS DNS / search domains (default is 127.0.0.1 while mesh DNS runs on :53)
+                          (or set env NOSPOON_SYSTEM_DNS=0; legacy: NOSPOON_DARWIN_SYSTEM_DNS=0)
 
   From the repo, \`npm run dev\` runs the control server plus Vite (see scripts/dev-web.mjs).
 
@@ -323,6 +337,8 @@ async function runControlPlane (webArgv) {
     primaryCidr: flags.primaryCidr
   }
   if (flags.host != null) opts.host = flags.host
+  if (flags.seed != null) opts.clientSeedHex = flags.seed
+  if (flags.noSystemDns) opts.systemDnsOverride = false
   const { sessions, closeHttpServer, controlPanelRunningOnDisplay, keyLinkDisplay } =
     await startControlHttpServer(opts)
   console.log('')
