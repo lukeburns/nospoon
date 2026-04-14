@@ -8,7 +8,7 @@ A peer-to-peer VPN that **does not require a publicly reachable coordinator**. P
 
 | Mode | Command | Idea |
 |------|---------|------|
-| **HTTP control plane** | `nospoon` (default) or `nospoon web` | Join Hyperswarm topics and direct peers, mesh DNS, TUN — browser UI on `/`. Same topic string ⇒ same overlay; pairwise tunnels only. |
+| **HTTP control plane** | `nospoon` (default) | Join Hyperswarm topics and direct peers, mesh DNS, TUN — browser UI on `/`. Same topic string ⇒ same overlay; pairwise tunnels only. |
 
 IPv4 on the wire uses **key-address** encoding (IPs ↔ public keys inside the tunnel). IPv6 passes through without that layer. More detail: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -31,14 +31,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for trust, primary TUN addressing, and bi
 ```bash
 sudo nospoon
 # or explicit:
-sudo nospoon web --port 80
+sudo nospoon --port 80
 ```
 
 Mesh DNS, direct pool, topic joins, and static control UI. Options include `--host`, `--primary-cidr`, `--seed` (control Noise identity), and `--no-system-dns`. From the repo, `npm run dev` runs the control server plus Vite (see `scripts/dev-web.mjs`).
 
 ## Command reference
 
-### Default / `nospoon web` / `nospoon control`
+### Control plane options
 
 | Flag | Default | Description |
 |------|---------|-------------|

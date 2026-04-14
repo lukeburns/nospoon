@@ -20,8 +20,6 @@
     "nospoon": "bin/cli.js"
   },
   "scripts": {
-    "server": "node bin/cli.js server",
-    "client": "node bin/cli.js client",
     "test": "node --test test/*.test.js",
     "build": "esbuild web/index.jsx --bundle --outfile=lib/web.bundle.js --format=esm --platform=browser --jsx=automatic --minify",
     "dev": "node scripts/dev-web.mjs",

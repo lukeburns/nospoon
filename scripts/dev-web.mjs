@@ -137,7 +137,7 @@ console.log(`Vite (hot reload)               http://${displayUrlHost}:${vitePort
 console.log('  (use sudo if TUN creation fails; HTTP is up before primary interface finishes starting)')
 console.log('')
 
-const nospoon = spawn(process.execPath, [cli, 'web', '--host', host, '--port', String(port)], {
+const nospoon = spawn(process.execPath, [cli, '--host', host, '--port', String(port)], {
   cwd: root,
   stdio: 'inherit',
   env: process.env
