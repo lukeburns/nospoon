@@ -4,8 +4,6 @@ A complete walkthrough of how nospoon works, from the big picture down to
 every important function. Written for someone who knows networking basics
 but not Node.js internals.
 
-> **Branch note:** The HyperDHT **hub (`server`) / spoke (`client`)** VPN was removed. The CLI is **control plane (default)** and **`genkey`**. Older diagrams that mention hub/client are historical; key-address, framing, and swarm sections still apply.
-
 ## The Big Picture
 
 nospoon is a peer-to-peer VPN. Two machines that can't normally reach each

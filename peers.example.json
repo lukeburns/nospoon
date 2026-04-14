@@ -1,6 +1,0 @@
-{
-  "peers": {
-    "client-a-public-key-hex-64-chars-here-replace-me-0000000000000000": "10.0.0.2",
-    "client-b-public-key-hex-64-chars-here-replace-me-1111111111111111": "10.0.0.3"
-  }
-}
