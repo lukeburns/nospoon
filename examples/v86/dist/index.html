@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="description" content="Standalone v86 FreeBSD demo with mesh TCP bridge; static build, assets from nospoon /v86/."/>
+  <title>v86 + mesh bridge — nospoon example</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <header class="page-header">
+    <h1>v86</h1>
+  </header>
+
+  <section class="v86-section">
+    <div id="v86-screen-container"></div>
+    <p class="v86-toolbar">
+      <span id="v86-bridge-status" class="bridge-status bridge-status--off" title="Bridge status"></span>
+      <button type="button" id="v86-stop-ssh" class="bridge-disconnect-btn" hidden>Disconnect</button>
+      <span class="toolbar-spacer"></span>
+      <button type="button" id="v86-save-snapshot">Save</button>
+      <button type="button" id="v86-clear-snapshot">Wipe</button>
+    </p>
+    <p id="v86-snapshot-status" class="v86-snapshot-status"></p>
+    <span class="section-label">Log</span>
+    <pre id="v86-log" class="v86-log" aria-label="Log"></pre>
+  </section>
+
+  <script src="nospoon-debug.js"></script>
+  <script src="bundle.js" defer></script>
+</body>
+</html>
