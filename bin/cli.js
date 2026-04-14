@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 
-const net = require('net')
-const { startSwarmMesh } = require('../lib/mesh/swarm-mesh')
-const { collectAssignedIpv4Addresses, pickFreeTenDotZeroSubnet } = require('../lib/ip/ip-subnet')
 const { parse32Bytes, toHex32, encodeZ32 } = require('../lib/wire/key-encoding')
 
 const args = process.argv.slice(2)
 
 /** Subcommands; anything else starting with `-` is treated as flags for the default (control plane). */
-const SUBCOMMANDS = new Set(['swarm', 'genkey', 'web', 'control'])
+const SUBCOMMANDS = new Set(['genkey', 'web', 'control'])
 
 const CIDR_V4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/
 
@@ -29,29 +26,6 @@ function validateCidr (value, label) {
     process.exit(1)
   }
   return value
-}
-
-function validateCidrV6 (value, label) {
-  const parts = value.split('/')
-  if (parts.length !== 2) {
-    console.error(`Error: ${label} must be in CIDR format (e.g. fd00::1/64)`)
-    process.exit(1)
-  }
-  const prefix = parseInt(parts[1], 10)
-  if (!net.isIPv6(parts[0]) || isNaN(prefix) || prefix < 1 || prefix > 128) {
-    console.error(`Error: ${label} must be a valid IPv6 CIDR (e.g. fd00::1/64)`)
-    process.exit(1)
-  }
-  return value
-}
-
-function validateMtu (value) {
-  const mtu = parseInt(value, 10)
-  if (isNaN(mtu) || mtu < 576 || mtu > 65535) {
-    console.error('Error: MTU must be between 576 and 65535')
-    process.exit(1)
-  }
-  return mtu
 }
 
 function parseWebFlags (args) {
@@ -91,67 +65,17 @@ function parseWebFlags (args) {
   return flags
 }
 
-/**
- * Default: first free 10.0.x.1/24 from local interface addresses (avoids clashes between
- * multiple nospoon processes on one host). Override with --ip <cidr>.
- */
-function applyIpv4AutoUnlessExplicit (flags) {
-  if (flags.ip) return
-  const assigned = collectAssignedIpv4Addresses()
-  let picked
-  try {
-    picked = pickFreeTenDotZeroSubnet(assigned)
-  } catch (e) {
-    console.error('Error:', e.message)
-    process.exit(1)
-  }
-  flags.ip = picked.cidr
-  console.log(`Auto IP: using ${flags.ip}`)
-}
-
-/** Swarm: options only (topic is positional before flags). */
-function parseSwarmFlags (args) {
-  const flags = {}
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--ip' && args[i + 1]) {
-      flags.ip = validateCidr(args[++i], '--ip')
-    } else if (args[i] === '--seed' && args[i + 1]) {
-      try {
-        flags.seed = parseSeedArg(args[++i], '--seed')
-      } catch (e) {
-        console.error('Error:', e.message)
-        process.exit(1)
-      }
-    } else if (args[i] === '--mtu' && args[i + 1]) {
-      flags.mtu = validateMtu(args[++i])
-    } else if (args[i] === '--ipv6' && args[i + 1]) {
-      flags.ipv6 = validateCidrV6(args[++i], '--ipv6')
-    } else if (args[i].startsWith('--')) {
-      console.error(`Error: unknown swarm option: ${args[i]}`)
-      process.exit(1)
-    }
-  }
-  return flags
-}
-
 function printUsage () {
   console.log(`
 nospoon - P2P VPN over HyperDHT
 
 Usage:
   nospoon [options]                       HTTP control plane (default): join/leave topics & direct peers
-  nospoon swarm <topic> [options]        Hyperswarm topic mesh (pairwise; topic = capability)
   nospoon genkey                          Generate a random Noise seed + public key (z32)
 
   \`web\` / \`control\` are aliases for the default command. Use \`--help\` for this message.
 
 Keys and seeds use z32 encoding (32-byte values). 64-character hex is still accepted.
-
-Swarm options:
-  --ip <cidr>           TUN IPv4 (default: first free 10.0.x.1/24; use --ip to fix)
-  --ipv6 <cidr>         TUN IPv6 (e.g. fd00::1/64)
-  --seed <z32|hex>      Deterministic swarm identity
-  --mtu <num>           MTU (default: 1400)
 
 Control plane (sudo for TUN when joining topics or peers):
   --port <num>          HTTP port (default: 80)
@@ -165,7 +89,6 @@ Control plane (sudo for TUN when joining topics or peers):
 
 Examples:
   nospoon genkey
-  sudo nospoon swarm my-shared-topic
   sudo nospoon --port 8080
 `)
 }
@@ -247,18 +170,6 @@ async function main () {
     console.log('Seed (keep secret):  ', encodeZ32(seed))
     console.log('Public key (share):  ', encodeZ32(keyPair.publicKey))
     process.exit(0)
-  }
-
-  if (command === 'swarm') {
-    const topic = args[1]
-    if (!topic || topic.startsWith('--')) {
-      console.error('Error: topic string required (e.g. nospoon swarm my-lan-name)')
-      process.exit(1)
-    }
-    const flags = parseSwarmFlags(args.slice(2))
-    applyIpv4AutoUnlessExplicit(flags)
-    await startSwarmMesh({ topic, ...flags })
-    return
   }
 
   console.error(`Unknown command: ${command}`)

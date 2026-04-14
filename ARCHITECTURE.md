@@ -4,7 +4,7 @@ A complete walkthrough of how nospoon works, from the big picture down to
 every important function. Written for someone who knows networking basics
 but not Node.js internals.
 
-> **Branch note:** The HyperDHT **hub (`server`) / spoke (`client`)** VPN was removed. The CLI is **control plane (default)**, **`swarm <topic>`**, and **`genkey`**. Older diagrams that mention hub/client are historical; key-address, framing, and swarm sections still apply.
+> **Branch note:** The HyperDHT **hub (`server`) / spoke (`client`)** VPN was removed. The CLI is **control plane (default)** and **`genkey`**. Older diagrams that mention hub/client are historical; key-address, framing, and swarm sections still apply.
 
 ## The Big Picture
 
@@ -28,33 +28,34 @@ through unchanged on the wire in the current design.
 
 ## Operating modes
 
-### Topic mesh (`swarm`)
+### Topic mesh
 
-**`nospoon swarm <topic>`** joins a **Hyperswarm** topic derived from the
-shared topic bytes. **Discovery key:** **`swarmDiscoveryKey`** in `mesh/swarm-topic.js`
-uses **hypercore-crypto**’s `hash` (BLAKE2b) over a **`nospoon`** domain label plus
-the topic bytes — a 32-byte value for **`swarm.join`**, so the **raw topic is not
-advertised on the DHT** as UTF-8. **Authentication:** after the **Noise** handshake,
-peers exchange a **hypercore-style capability** (keyed by the handshake hash, same
-pattern as replicate caps) proving possession of the **topic preimage**; mismatch
-destroys the connection. Each pairwise stream is still **Noise-encrypted** for
-payloads. There is no separate hub: every participant runs the same mesh logic.
-**One topic per process**, **pairwise** IPv4 forwarding only (no application-level
-relay of tun frames through a third peer). Mappings from public key to local IPv4
-alias are **ephemeral** for now (no persistence across restarts).
+The HTTP control plane joins **Hyperswarm** topics via **`startSwarmMesh`** in
+`mesh/swarm-mesh.js` (shared swarm in **`control/control-http.js`**), using the same
+crypto as a standalone topic mesh would. **Discovery key:** **`swarmDiscoveryKey`** in
+`mesh/swarm-topic.js` uses **hypercore-crypto**’s `hash` (BLAKE2b) over a **`nospoon`**
+domain label plus the topic bytes — a 32-byte value for **`swarm.join`**, so the
+**raw topic is not advertised on the DHT** as UTF-8. **Authentication:** after the
+**Noise** handshake, peers exchange a **hypercore-style capability** (keyed by the
+handshake hash, same pattern as replicate caps) proving possession of the **topic
+preimage**; mismatch destroys the connection. Each pairwise stream is still
+**Noise-encrypted** for payloads. There is no separate hub: every participant runs the
+same mesh logic. **Pairwise** IPv4 forwarding only (no application-level relay of tun
+frames through a third peer). Mappings from public key to local IPv4 alias are
+**ephemeral** for now (no persistence across restarts).
 
-### Default IPv4 (`swarm`, control plane TUN)
+### Default IPv4 (control plane TUN)
 
-Unless **`--ip`** is set, **`cli.js`** reads addresses on local interfaces
-(`collectAssignedIpv4Addresses`) and picks the first free **`10.0.n.1/24`** in
-`10.0.0.0/16` for **`nospoon swarm`**.
+The control plane picks a **primary** IPv4 CIDR with **`pickFreeTenDotZeroSubnet`** over
+assigned addresses (see **`control/control-http.js`** and **`ip/ip-subnet.js`**), or
+**`--primary-cidr`** / reservations override that default.
 
 
 ## File Map
 
 ```
 bin/
-  cli.js              CLI: default control plane, swarm, genkey; IPv4 pick; validation
+  cli.js              CLI: default control plane, genkey; flag validation
 
 lib/
   index.js            Public package API (re-exports submodules)
