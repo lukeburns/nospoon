@@ -62,7 +62,14 @@ lib/
   web.bundle.css      Control-panel styles
 
   control/
-    control-http.js   HTTP control plane, mesh DNS, shared swarm + direct pool
+    control-http.js        `ControlPlaneSessionManager` + `startControlHttpServer` (core session lifecycle, bind, URLs)
+    control-constants.js   Shared control-plane constants (debounce intervals, panel DNS host)
+    control-session-dns.js  Prototype mixin: mesh DNS, loopback aliases, whois proxy, manual records
+    control-session-policy.js  Prototype mixin: primary full-tunnel OS sync, routing policy helpers
+    control-session-swarm.js  Prototype mixin: shared Hyperswarm, topic discovery, inbound demux
+    control-helpers.js     Control-only helpers (CIDR validation, seed/DNS opts, swarm discovery checks)
+    control-http-io.js     HTTP response helpers, static HTML, web bundle paths, first-frame reader
+    control-http-handler.js  `createControlHttpListener` — REST + SSE + whois routes
 
   mesh/
     swarm-topic.js    Discovery key (BLAKE2b) + post-handshake topic capability
